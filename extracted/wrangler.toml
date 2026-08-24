@@ -1,0 +1,20 @@
+name = "family-todo-bot"
+main = "src/index.js"
+compatibility_date = "2026-08-19"
+compatibility_flags = ["nodejs_compat"]
+
+# Non-secret configuration. Secrets go via `wrangler secret put` (see README).
+[vars]
+TODOIST_PROJECT_ID = "REPLACE_ME"
+TZ_NAME            = "Europe/Madrid"
+TODOIST_DUE_LANG   = "ru"
+ALLOWED_CHAT_IDS   = "REPLACE_ME"   # comma-separated Telegram chat ids
+ALLOW_DELETE       = "false"        # "true" enables real deletes
+
+# Create with: wrangler kv namespace create CHATS
+[[kv_namespaces]]
+binding = "CHATS"
+id      = "REPLACE_ME"
+
+[observability]
+enabled = true

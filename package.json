@@ -1,0 +1,17 @@
+{
+  "name": "family-todo-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram (text + voice) -> Claude -> one shared Todoist project",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "webhook:set": "bash scripts/set-webhook.sh",
+    "webhook:info": "bash scripts/webhook-info.sh"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

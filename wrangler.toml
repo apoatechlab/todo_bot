@@ -1,0 +1,41 @@
+name = "family-todo-bot"
+main = "src/index.js"
+compatibility_date = "2026-08-19"
+
+# Non-secret configuration. Secrets go via `wrangler secret put` (see README).
+# fetch / FormData / Blob / crypto.randomUUID are all native to workerd,
+# so nodejs_compat is deliberately not enabled.
+[vars]
+TODOIST_PROJECT_ID = "REPLACE_ME"   # "Домашние дела"
+TZ_NAME            = "Europe/Madrid"
+TODOIST_DUE_LANG   = "ru"
+ALLOWED_CHAT_IDS   = "REPLACE_ME"        # Telegram group "TODO"
+ALLOW_DELETE       = "false"               # "true" enables real deletes
+CLAUDE_MODEL       = "claude-sonnet-5"
+CLAUDE_EFFORT      = "low"                 # low | medium | high | xhigh | max
+
+# Morning digest (see [triggers] below).
+DIGEST_CHAT_ID     = "REPLACE_ME"         # where the digest is posted
+DIGEST_AT          = "07:30"               # local time in TZ_NAME
+DIGEST_SKIP_EMPTY  = "true"                # "false" = post even with nothing due
+SUGGEST_COUNT      = "2"                   # undated tasks suggested after the digest; 0 = off
+
+# Due-soon alerts (every 5 min).
+ALERT_LEAD_MIN     = "5"                   # warn this many minutes ahead
+ALERT_MIN_PRIORITY = "2"                   # API scale: 1=default, so 2 = above default
+# ALERT_CHAT_ID    = ""                    # defaults to DIGEST_CHAT_ID
+
+# Create with: wrangler kv namespace create CHATS
+[[kv_namespaces]]
+binding = "CHATS"
+id      = "REPLACE_ME"
+
+# Cloudflare cron is UTC-only. 05:30 UTC = 07:30 CEST (summer),
+# 06:30 UTC = 07:30 CET (winter). The handler checks local time and the
+# off-season firing returns immediately, so exactly one digest goes out.
+# The */5 entry drives dueSoonAlerts instead; scheduled() dispatches on event.cron.
+[triggers]
+crons = ["30 5 * * *", "30 6 * * *", "*/5 * * * *"]
+
+[observability]
+enabled = true

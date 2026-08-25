@@ -121,18 +121,56 @@ async function handleUpdate(update, env) {
 }
 
 // =============================================================== todoist ====
+/**
+ * Todoist has visible bad spells — slow responses and intermittent 502s — so
+ * 429 and 5xx are retried, matching what claude() already did.
+ *
+ * The X-Request-Id is generated ONCE per call and reused across attempts. That
+ * is what makes retrying a write safe: Todoist deduplicates on it, so a retried
+ * add_task cannot create the task twice. (Regenerating it per attempt, as this
+ * did before, made the header decorative.)
+ */
 async function todoist(env, path, { method = 'GET', body } = {}) {
-  const r = await fetch(TD + path, {
-    method,
-    headers: {
-      Authorization: `Bearer ${env.TODOIST_API_TOKEN}`,
-      'Content-Type': 'application/json',
-      ...(method !== 'GET' ? { 'X-Request-Id': crypto.randomUUID() } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!r.ok) throw new Error(`Todoist ${method} ${path} → ${r.status} ${await r.text()}`);
-  return r.status === 204 ? null : r.json();
+  const reqId = crypto.randomUUID();
+  let status = 0;
+  let detail = '';
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let r;
+    try {
+      r = await fetch(TD + path, {
+        method,
+        headers: {
+          Authorization: `Bearer ${env.TODOIST_API_TOKEN}`,
+          'Content-Type': 'application/json',
+          ...(method !== 'GET' ? { 'X-Request-Id': reqId } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch (e) {                                   // DNS / TLS / connection reset
+      status = 0;
+      detail = e.message;
+      if (attempt === 2) break;
+      await sleep(400 * 2 ** attempt);
+      continue;
+    }
+
+    if (r.ok) return r.status === 204 ? null : r.json();
+
+    status = r.status;
+    detail = (await r.text()).slice(0, 300);
+    if (status !== 429 && status < 500) break;      // 4xx is our bug, not theirs
+    if (attempt === 2) break;
+    const retryAfter = Number(r.headers.get('retry-after')) * 1000;
+    await sleep(Math.min(retryAfter || 400 * 2 ** attempt, 5000));
+  }
+
+  console.error(`Todoist ${method} ${path} -> ${status} ${detail}`);
+  // Keep the raw shape for our own mistakes; give people something human for theirs.
+  if (status === 0 || status >= 500) {
+    throw new Error('Todoist сейчас не отвечает. Попробуй ещё раз через минуту.');
+  }
+  throw new Error(`Todoist ${method} ${path} → ${status} ${detail}`);
 }
 
 async function listTasks(env) {

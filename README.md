@@ -491,11 +491,16 @@ This job costs **no Claude tokens** — it is a plain Todoist read plus a send.
 - **Shared project attribution.** The token owner is the actor for every write,
   so all changes appear in the Todoist activity log as one person regardless of
   who sent the message. `responsible_uid` is what distinguishes them.
-- **`X-Request-Id` does not actually deduplicate here.** It is a fresh UUID per
-  call, so a retry would send a different one. It is harmless, and the real
-  protection against double-creation is answering Telegram before doing the work
-  (§9). To make it real, the id would have to be derived from
-  `chat_id + message_id` and reused across attempts.
+- **Todoist has bad spells.** Intermittent 502s and multi-second responses on
+  `/api/v1/tasks` have been observed in the wild (6–8 s where the norm is
+  ~150 ms). `todoist()` therefore retries 429 and 5xx twice with backoff,
+  honouring `retry-after`, and reports "Todoist сейчас не отвечает" rather than
+  a raw status line. 4xx is never retried — that would be our bug, not theirs.
+- **`X-Request-Id` is generated once per call and reused across retries.** That
+  is what makes retrying a *write* safe: Todoist deduplicates on it, so a
+  retried `add_task` cannot create the task twice. An earlier version minted a
+  fresh id per attempt, which made the header decorative; if you refactor the
+  retry loop, keep the id outside it.
 - **Todoist Free** — this account has no Todoist-side reminders, so anything
   push-shaped (a morning digest, a nudge on an overdue task) has to come from a
   Cron Trigger in this Worker, not from Todoist.

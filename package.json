@@ -5,13 +5,18 @@
   "description": "Telegram (text + voice) -> Claude -> one shared Todoist project",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "tail": "wrangler tail",
+    "dev": "./scripts/wg.sh dev",
+    "deploy": "./scripts/wg.sh deploy",
+    "tail": "./scripts/wg.sh tail",
+    "secret": "./scripts/wg.sh secret",
     "webhook:set": "bash scripts/set-webhook.sh",
     "webhook:info": "bash scripts/webhook-info.sh"
   },
   "devDependencies": {
     "wrangler": "^4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apoatechlab/todo_bot.git"
   }
 }

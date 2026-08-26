@@ -4,5 +4,8 @@ node_modules/
 # local secrets for `wrangler dev` — never commit
 .dev.vars
 
+# your real ids — copy wrangler.toml to this and fill it in
+wrangler.local.toml
+
 *.zip
 .DS_Store

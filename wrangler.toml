@@ -6,16 +6,16 @@ compatibility_date = "2026-08-19"
 # fetch / FormData / Blob / crypto.randomUUID are all native to workerd,
 # so nodejs_compat is deliberately not enabled.
 [vars]
-TODOIST_PROJECT_ID = "REPLACE_ME"   # "Домашние дела"
+TODOIST_PROJECT_ID = "REPLACE_ME"          # last path segment of the project URL
 TZ_NAME            = "Europe/Madrid"
 TODOIST_DUE_LANG   = "ru"
-ALLOWED_CHAT_IDS   = "REPLACE_ME"        # Telegram group "TODO"
+ALLOWED_CHAT_IDS   = "REPLACE_ME"          # comma-separated Telegram chat ids
 ALLOW_DELETE       = "false"               # "true" enables real deletes
 CLAUDE_MODEL       = "claude-sonnet-5"
 CLAUDE_EFFORT      = "low"                 # low | medium | high | xhigh | max
 
 # Morning digest (see [triggers] below).
-DIGEST_CHAT_ID     = "REPLACE_ME"         # where the digest is posted
+DIGEST_CHAT_ID     = "REPLACE_ME"          # where the digest is posted
 DIGEST_AT          = "07:30"               # local time in TZ_NAME
 DIGEST_SKIP_EMPTY  = "true"                # "false" = post even with nothing due
 SUGGEST_COUNT      = "2"                   # undated tasks suggested after the digest; 0 = off

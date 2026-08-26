@@ -29,6 +29,7 @@ sees it, so any capability added as a tool works in both channels automatically.
 ```
 src/index.js            the Worker — everything lives here
 wrangler.toml           non-secret config; project id and timezone are filled in
+scripts/wg.sh           wrangler wrapper — prefers wrangler.local.toml
 scripts/set-webhook.sh  register the Telegram webhook
 scripts/webhook-info.sh webhook status (first place to look when it goes quiet)
 .dev.vars.example       template for `wrangler dev`
@@ -60,13 +61,13 @@ fork should change the project, chat and timezone (see §3.3).
 
 | Var | Value | Note |
 |---|---|---|
-| `TODOIST_PROJECT_ID` | `REPLACE_ME` | the shared project «Домашние дела» |
+| `TODOIST_PROJECT_ID` | `REPLACE_ME` | last path segment of the project URL |
 | `TZ_NAME` | `Europe/Madrid` | account timezone |
 | `TODOIST_DUE_LANG` | `ru` | Todoist's natural-language date parser |
 | `CLAUDE_MODEL` | `claude-sonnet-5` | |
 | `CLAUDE_EFFORT` | `low` | thinking depth; raise if it starts misreading messages |
 | `DIGEST_AT` | `07:30` | morning digest, local time — see §7 |
-| `ALLOWED_CHAT_IDS` | `REPLACE_ME` | the Telegram group "TODO" |
+| `ALLOWED_CHAT_IDS` | `REPLACE_ME` | comma-separated Telegram chat ids |
 | `ALLOW_DELETE` | `false` | deletes are mapped to complete |
 
 Project members are read from Todoist at runtime and cached for a day — nothing
@@ -75,7 +76,8 @@ to configure.
 Not in git, and never should be: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
 `ANTHROPIC_API_KEY`, `TODOIST_API_TOKEN`, `GROQ_API_KEY`. They are Cloudflare
 Worker secrets. `.dev.vars` (local dev only) is gitignored; `.dev.vars.example`
-is the empty template.
+is the empty template. Personal ids live in the gitignored
+`wrangler.local.toml` — see §3.3.
 
 ---
 
@@ -115,12 +117,29 @@ npx wrangler login
 npx wrangler kv namespace create CHATS     # paste the id into wrangler.toml
 ```
 
-Then edit `wrangler.toml` — the values committed here belong to the original
-deployment, so replace at least these three:
+The tracked `wrangler.toml` ships `REPLACE_ME` placeholders so this repository
+can stay public without publishing anybody's project, chat or namespace ids. Put
+your real values in **`wrangler.local.toml`**, which is gitignored:
 
-- `TODOIST_PROJECT_ID` — your project
-- `ALLOWED_CHAT_IDS` — filled in at step 3.5
-- `DIGEST_CHAT_ID` — usually the same chat
+```bash
+cp wrangler.toml wrangler.local.toml   # then fill in the four REPLACE_ME values
+```
+
+Drive wrangler through `./scripts/wg.sh` (or the `npm run` scripts, which wrap
+it). It uses `wrangler.local.toml` when that file exists and falls back to the
+tracked `wrangler.toml` otherwise, so a fresh clone still works:
+
+```bash
+npm run deploy          # ./scripts/wg.sh deploy
+npm run tail
+npm run secret -- put ANTHROPIC_API_KEY
+```
+
+Calling `npx wrangler` directly bypasses this and will read the placeholders.
+
+The four values to fill in: the **KV namespace id** from the command above,
+`TODOIST_PROJECT_ID` (last path segment of the project URL), and
+`ALLOWED_CHAT_IDS` / `DIGEST_CHAT_ID`, which you only learn at step 3.5.
 
 `TZ_NAME` and `TODOIST_DUE_LANG` drive date parsing and every schedule; set them
 to your own timezone and language.

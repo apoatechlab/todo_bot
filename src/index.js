@@ -626,6 +626,8 @@ async function transcribe(env, fileId) {
 
 // ========================================================= morning digest ===
 const TD_APP = 'https://app.todoist.com/app';
+/** KV key holding the ids the last few morning nudges already suggested. */
+const RECENT_KEY = 'suggest:recent';
 
 /** Local wall-clock parts in `tz`, as the family experiences them. */
 function localParts(tz) {
@@ -715,41 +717,65 @@ async function morningDigest(env) {
 }
 
 /**
+ * Fisher-Yates over a copy, drawing from Web Crypto rather than Math.random().
+ *
+ * A cron firing usually gets a cold isolate, and Math.random() there replayed
+ * the same sequence every morning — so the "может, сегодня?" nudge kept naming
+ * the same two tasks. crypto.getRandomValues() is properly seeded per call.
+ */
+function shuffled(items) {
+  const out = items.slice();
+  const rnd = new Uint32Array(out.length);
+  crypto.getRandomValues(rnd);
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = rnd[i] % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/**
  * Second morning message: a couple of tasks that have no due date at all,
  * chosen at random, offered as candidates for today.
  *
  * Random rather than oldest-first on purpose — a fixed order would surface the
  * same stale tasks every morning until someone finally did them, and the family
- * would learn to skim past the message.
+ * would learn to skim past the message. Recently suggested ids are remembered
+ * for a few days on top of that, so chance alone cannot repeat yesterday.
  */
 async function suggestUndated(env, chatId, all, nameOf) {
-  const n = Number(env.SUGGEST_COUNT || 2);
+  const n = Number(env.SUGGEST_COUNT || 5);
   if (n < 1) return;
 
   const pool = all.filter(t => !t.due?.date);
   if (!pool.length) return void console.log('suggest: no undated tasks');
 
-  // Fisher-Yates over a copy, then take the first n.
-  const picks = pool.slice();
-  for (let i = picks.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [picks[i], picks[j]] = [picks[j], picks[i]];
-  }
+  // Prefer tasks the last few mornings have not already offered; fall back to
+  // the whole pile once the cooldown list has eaten most of it.
+  const recent = (await env.CHATS.get(RECENT_KEY, 'json')) || [];
+  const unseen = pool.filter(t => !recent.includes(String(t.id)));
+  const picks = shuffled(unseen.length >= n ? unseen : pool).slice(0, n);
 
-  const lines = picks.slice(0, n).map(t => {
+  const lines = picks.map(t => {
     const who = t.responsible_uid ? nameOf[String(t.responsible_uid)] : null;
-    return `• <a href="${TD_APP}/task/${t.id}">${escapeHtml(t.content)}</a>`
-      + (who ? ` · ${escapeHtml(who)}` : '');
+    return `\u2022 <a href="${TD_APP}/task/${t.id}">${escapeHtml(t.content)}</a>`
+      + (who ? ` \u00b7 ${escapeHtml(who)}` : '');
   });
 
   const rest = pool.length - lines.length;
-  const tail = rest > 0 ? `\n\n<i>Ещё ${rest} без срока.</i>` : '';
+  const tail = rest > 0 ? `\n\n<i>\u0415\u0449\u0451 ${rest} \u0431\u0435\u0437 \u0441\u0440\u043e\u043a\u0430.</i>` : '';
 
   await say(env, chatId,
-    `💡 <b>Без срока — может, сегодня?</b>\n${lines.join('\n')}${tail}\n\n`
-    + `<i>Скажи «${escapeHtml(picks[0].content)} — сегодня», и поставлю срок.</i>`,
+    `\ud83d\udca1 <b>\u0411\u0435\u0437 \u0441\u0440\u043e\u043a\u0430 \u2014 \u043c\u043e\u0436\u0435\u0442, \u0441\u0435\u0433\u043e\u0434\u043d\u044f?</b>\n${lines.join('\n')}${tail}\n\n`
+    + `<i>\u0421\u043a\u0430\u0436\u0438 \u00ab${escapeHtml(picks[0].content)} \u2014 \u0441\u0435\u0433\u043e\u0434\u043d\u044f\u00bb, \u0438 \u043f\u043e\u0441\u0442\u0430\u0432\u043b\u044e \u0441\u0440\u043e\u043a.</i>`,
     { parse_mode: 'HTML', disable_web_page_preview: true });
-  console.log(`suggest: sent ${lines.length} of ${pool.length} undated`);
+
+  // Keep a few rounds of history, but never more than the pool can spare.
+  const keep = Math.min(n * 3, Math.max(0, pool.length - n));
+  const memo = [...picks.map(t => String(t.id)), ...recent].slice(0, keep);
+  await env.CHATS.put(RECENT_KEY, JSON.stringify(memo), { expirationTtl: 1209600 });
+
+  console.log(`suggest: sent ${lines.length} of ${pool.length} undated, ${recent.length} on cooldown`);
 }
 
 // ======================================================== due-soon alerts ===

@@ -18,7 +18,7 @@ CLAUDE_EFFORT      = "low"                 # low | medium | high | xhigh | max
 DIGEST_CHAT_ID     = "REPLACE_ME"          # where the digest is posted
 DIGEST_AT          = "07:30"               # local time in TZ_NAME
 DIGEST_SKIP_EMPTY  = "true"                # "false" = post even with nothing due
-SUGGEST_COUNT      = "2"                   # undated tasks suggested after the digest; 0 = off
+SUGGEST_COUNT      = "5"                   # undated tasks suggested after the digest; 0 = off
 
 # Due-soon alerts (every 5 min).
 ALERT_LEAD_MIN     = "5"                   # warn this many minutes ahead

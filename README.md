@@ -363,7 +363,7 @@ project link at the bottom.
 | `DIGEST_CHAT_ID` | `REPLACE_ME` | where to post; falls back to the first allowlisted chat |
 | `DIGEST_AT` | `07:30` | local time in `TZ_NAME` |
 | `DIGEST_SKIP_EMPTY` | `true` | `false` posts "ничего не запланировано" instead of staying quiet |
-| `SUGGEST_COUNT` | `2` | undated tasks offered in the follow-up; `0` disables it |
+| `SUGGEST_COUNT` | `5` | undated tasks offered in the follow-up; `0` disables it |
 
 **Why two cron triggers.** Cloudflare cron expressions are UTC-only with no
 timezone support, so `wrangler.toml` registers **both** `30 5 * * *` and
@@ -381,13 +381,16 @@ March or October.
 ### Second message: undated nudge
 
 Straight after the digest the Worker sends a follow-up offering
-`SUGGEST_COUNT` (default 2) tasks that have **no due date at all**, picked at
+`SUGGEST_COUNT` (default 5) tasks that have **no due date at all**, picked at
 random, as candidates for today:
 
 ```
 💡 Без срока — может, сегодня?
 • починить кран
 • сходить в санте джелато
+• заточка ножей
+• найти гладильную доску
+• купить булгур
 
 Ещё 2 без срока.
 
@@ -397,6 +400,13 @@ random, as candidates for today:
 **Random, not oldest-first.** A fixed order would surface the same stale tasks
 every morning until somebody finally did them, and the family would learn to
 skim past the message.
+
+**Randomness comes from `crypto.getRandomValues()`, not `Math.random()`.** A
+cron firing usually lands on a cold isolate, where `Math.random()` replayed the
+same sequence every morning — so the nudge kept naming the same two tasks. On
+top of that, the ids of the last few rounds are kept in KV under
+`suggest:recent` and skipped while the pool still has enough alternatives, so
+chance alone cannot hand back yesterday's pair.
 
 **It sends even on a quiet morning.** A day with nothing scheduled is exactly
 when picking something off the undated pile is worth suggesting, so this

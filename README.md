@@ -284,6 +284,7 @@ Editing, by voice or text:
 - `/rules` — print numbered list
 - `/rules reset` — restore defaults
 - `/reset` — clear conversation memory only
+- `/digest` — post the morning digest into this chat right now (§7)
 
 Cap: 25 rules. House rules are persuasion, not enforcement — if the bot starts
 behaving oddly, `/rules` is the first place to look.
@@ -380,6 +381,15 @@ even a double firing posts once.
 
 This also means **the digest self-corrects across DST** — nothing to change in
 March or October.
+
+### Running it by hand
+
+`/digest` takes the same path as the 07:30 cron and posts into the chat it was
+called from. Both cron guards — the 30-minute window and the KV day key — exist
+only to stop the schedule firing twice, so a hand-run skips them, and skips
+*writing* the day key too: otherwise testing at 07:00 would swallow the real
+digest half an hour later. A hand-run also ignores `DIGEST_SKIP_EMPTY`, since a
+command that answers with silence looks broken.
 
 ### Second message: undated nudge
 

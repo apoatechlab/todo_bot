@@ -106,7 +106,14 @@ async function handleUpdate(update, env) {
     return void say(env, chatId,
       'Пиши или наговаривай: «купить молоко завтра», «перенеси дантиста на пятницу», «садик — сделано», «что на сегодня?»\n\n' +
       'Напоминания: «напомни завтра в 18:00 забрать посылку» или «это важно» — подниму приоритет и пришлю сюда сигнал за 5 минут.\n\n' +
+      '/digest — прислать утренний дайджест прямо сейчас.\n' +
       '/rules — правила бота, /rules reset — сбросить, /reset — забыть контекст разговора.');
+  }
+  // Same code path the 07:30 cron takes, posted into this chat on demand —
+  // the only way to see the real digest without waiting for tomorrow.
+  if (cmd === '/digest') {
+    await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
+    return void await morningDigest(env, { force: true, chatId });
   }
   if (cmd === '/reset') {
     await env.CHATS.delete(`hist:${chatId}`);
@@ -674,23 +681,30 @@ function shortDate(isoDate) {
  * 08:20 Madrid. Whichever one lands inside the window runs; the other returns
  * immediately. A KV day-key makes the send idempotent regardless.
  */
-async function morningDigest(env) {
+async function morningDigest(env, { force = false, chatId: to = null } = {}) {
   const tz = env.TZ_NAME || 'Europe/Madrid';
-  const chatId = (env.DIGEST_CHAT_ID || (env.ALLOWED_CHAT_IDS || '').split(',')[0] || '').trim();
+  const chatId = to || (env.DIGEST_CHAT_ID || (env.ALLOWED_CHAT_IDS || '').split(',')[0] || '').trim();
   if (!chatId) return void console.warn('digest: no DIGEST_CHAT_ID / ALLOWED_CHAT_IDS');
 
-  const [th, tm] = (env.DIGEST_AT || '08:20').split(':').map(Number);
   const now = localParts(tz);
-  const drift = (now.hour * 60 + now.minute) - (th * 60 + tm);
-  // 30-minute window: cron firings can be delayed, but the other half-year's
-  // trigger is a full hour away and must not slip through.
-  if (drift < 0 || drift >= 30) {
-    return void console.log(`digest: skip, local ${now.hour}:${now.minute} (drift ${drift}m)`);
-  }
 
-  const dayKey = `digest:${now.date}`;
-  if (await env.CHATS.get(dayKey)) return void console.log('digest: already sent', now.date);
-  await env.CHATS.put(dayKey, '1', { expirationTtl: 172800 });
+  // /digest asks for the digest here and now. Both guards below exist to stop
+  // the cron sending twice, so a hand-run skips them — and deliberately does
+  // not write the day key either, or a test before 07:30 would swallow the
+  // real one.
+  if (!force) {
+    const [th, tm] = (env.DIGEST_AT || '08:20').split(':').map(Number);
+    const drift = (now.hour * 60 + now.minute) - (th * 60 + tm);
+    // 30-minute window: cron firings can be delayed, but the other half-year's
+    // trigger is a full hour away and must not slip through.
+    if (drift < 0 || drift >= 30) {
+      return void console.log(`digest: skip, local ${now.hour}:${now.minute} (drift ${drift}m)`);
+    }
+
+    const dayKey = `digest:${now.date}`;
+    if (await env.CHATS.get(dayKey)) return void console.log('digest: already sent', now.date);
+    await env.CHATS.put(dayKey, '1', { expirationTtl: 172800 });
+  }
 
   const [all, people] = await Promise.all([listTasks(env), roster(env)]);
   const nameOf = Object.fromEntries(people.map(p => [p.id, p.name.split(' ')[0]]));
@@ -727,7 +741,7 @@ async function morningDigest(env) {
     await say(env, chatId, out.join('\n'), { parse_mode: 'HTML', disable_web_page_preview: true, ...kb });
     posted = true;
     console.log(`digest: sent ${overdue.length} overdue + ${today.length} today`);
-  } else if (env.DIGEST_SKIP_EMPTY === 'false') {
+  } else if (force || env.DIGEST_SKIP_EMPTY === 'false') {
     await say(env, chatId, `🌅 <b>${shortDate(now.date)}</b> — на сегодня ничего не запланировано.`,
       { parse_mode: 'HTML', disable_web_page_preview: true, ...kb });
     posted = true;

@@ -590,9 +590,18 @@ time; the calendar only ever displays them, so all arithmetic goes through UTC
 noon (`parse`/`addDays`) and no timezone or DST shift can move a task onto the
 neighbouring day.
 
-**Theming is Telegram's.** The page reads `--tg-theme-*` custom properties, so
-light and dark follow the client with no toggle of our own. The fallbacks in
-`:root` only matter when the page is opened in a plain browser.
+**Theming is Telegram's, in two layers.** Telegram sets `--tg-theme-*` on
+`:root` as inline style and rewrites them the instant the client theme changes,
+so the palette follows along with no re-render — `themeChanged` only mirrors
+`tg.colorScheme` onto `data-scheme` and repaints the native header.
+
+The second layer matters because clients differ in *which* params they send: an
+older one may give `bg_color` and no `secondary_bg_color`, and a light-only
+fallback would then paint white cards onto a dark background. So every fallback
+is defined twice, and `data-scheme` (inside Telegram) or `prefers-color-scheme`
+(in a plain browser) picks the set. `color-scheme` is set alongside it so
+scrollbars and the overscroll area follow too, and `html` carries the background
+so overscroll does not flash white.
 
 ---
 

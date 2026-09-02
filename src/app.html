@@ -6,23 +6,72 @@
 <title>Календарь</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  /* Telegram injects --tg-theme-* per client theme; the fallbacks keep the page
-     readable when it is opened in a plain browser during development. */
+  /* Theming has two layers.
+     Telegram sets --tg-theme-* on :root as inline style and rewrites them the
+     moment the client theme changes, so the palette follows along with no
+     redraw. But clients differ in which params they send — an older one may
+     give bg-color and no secondary-bg-color — and a light-only fallback would
+     then paint white cards onto a dark background. So every fallback comes in
+     both schemes, chosen by --fb-* below. */
   :root {
-    --bg:     var(--tg-theme-bg-color, #ffffff);
-    --card:   var(--tg-theme-secondary-bg-color, #f1f2f6);
-    --text:   var(--tg-theme-text-color, #12161f);
-    --hint:   var(--tg-theme-hint-color, #8a8f99);
-    --accent: var(--tg-theme-button-color, #2f81f7);
+    color-scheme: light;
+    --fb-bg: #ffffff;
+    --fb-card: #f1f2f6;
+    --fb-text: #12161f;
+    --fb-hint: #8a8f99;
+    --fb-accent: #2f81f7;
+    --fb-link: #2f81f7;
+  }
+  /* Outside Telegram (dev in a browser) the OS preference decides… */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --fb-bg: #17212b;
+      --fb-card: #232e3c;
+      --fb-text: #ffffff;
+      --fb-hint: #708499;
+      --fb-accent: #5288c1;
+      --fb-link: #6ab3f3;
+    }
+  }
+  /* …and inside it, tg.colorScheme does, whichever way the OS is set. */
+  :root[data-scheme="dark"] {
+    color-scheme: dark;
+    --fb-bg: #17212b;
+    --fb-card: #232e3c;
+    --fb-text: #ffffff;
+    --fb-hint: #708499;
+    --fb-accent: #5288c1;
+    --fb-link: #6ab3f3;
+  }
+  :root[data-scheme="light"] {
+    color-scheme: light;
+    --fb-bg: #ffffff;
+    --fb-card: #f1f2f6;
+    --fb-text: #12161f;
+    --fb-hint: #8a8f99;
+    --fb-accent: #2f81f7;
+    --fb-link: #2f81f7;
+  }
+
+  :root {
+    --bg:     var(--tg-theme-bg-color, var(--fb-bg));
+    --card:   var(--tg-theme-secondary-bg-color, var(--fb-card));
+    --text:   var(--tg-theme-text-color, var(--fb-text));
+    --hint:   var(--tg-theme-hint-color, var(--fb-hint));
+    --accent: var(--tg-theme-button-color, var(--fb-accent));
     --onaccent: var(--tg-theme-button-text-color, #ffffff);
-    --link:   var(--tg-theme-link-color, #2f81f7);
+    --link:   var(--tg-theme-link-color, var(--fb-link));
     --danger: var(--tg-theme-destructive-text-color, #e5484d);
+    /* Priority colours are ours, not Telegram's, and are picked to stay legible
+       on both the light and the dark card. */
     --p4: #e5484d;
     --p3: #f0883e;
     --p2: #2f81f7;
     --p1: var(--hint);
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { background: var(--bg); }
   body {
     margin: 0;
     padding: 0 12px calc(24px + env(safe-area-inset-bottom));
@@ -86,8 +135,10 @@
   }
   li.task .bar { width: 3px; align-self: stretch; border-radius: 2px; background: var(--p1); flex: none; }
   li.task .body { min-width: 0; flex: 1; }
-  li.task .txt { overflow-wrap: anywhere; }
-  li.task .meta { margin-top: 2px; font-size: 12px; color: var(--hint); }
+  /* Both are spans inside a blockified flex item, so they need making block
+     explicitly — inline they run together as "полить растения11:00 · Аня". */
+  li.task .txt { display: block; overflow-wrap: anywhere; }
+  li.task .meta { display: block; margin-top: 2px; font-size: 12px; color: var(--hint); }
   li.task.overdue .time { color: var(--danger); font-weight: 600; }
 
   .empty { color: var(--hint); font-size: 14px; padding: 8px 2px; }
@@ -353,15 +404,31 @@
     if ((el = ev.target.closest('[data-open]'))) return openLink(el.dataset.open);
   });
 
+  /**
+   * Mirror the client's light/dark onto <html> and onto Telegram's own chrome.
+   *
+   * The --tg-theme-* values retarget themselves, so nothing here re-renders;
+   * this only picks which fallback set applies, sets color-scheme so scrollbars
+   * and the overscroll area follow, and repaints the native header and
+   * background that sit outside the page.
+   */
+  function applyScheme() {
+    if (!tg) return;
+    if (tg.colorScheme) document.documentElement.setAttribute('data-scheme', tg.colorScheme);
+    // Both methods are version-gated; older clients warn or throw rather than
+    // no-op, and a missing header tint is not worth breaking the page over.
+    try { tg.setBackgroundColor('bg_color'); } catch (e) {}
+    try { tg.setHeaderColor('bg_color'); } catch (e) {}
+  }
+
   if (tg) {
     tg.ready();
     tg.expand();
     if (tg.BackButton) {
       tg.BackButton.onClick(function () { state.selected = null; render(); });
     }
-    // The palette follows the client, so a theme switch has to redraw nothing —
-    // CSS variables update themselves. Only the back button needs syncing.
-    tg.onEvent('themeChanged', function () {});
+    applyScheme();
+    tg.onEvent('themeChanged', applyScheme);
   }
 
   load();

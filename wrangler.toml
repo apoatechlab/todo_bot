@@ -20,6 +20,12 @@ DIGEST_AT          = "07:30"               # local time in TZ_NAME
 DIGEST_SKIP_EMPTY  = "true"                # "false" = post even with nothing due
 SUGGEST_COUNT      = "5"                   # undated tasks suggested after the digest; 0 = off
 
+# Mini App: the calendar behind the digest button. Create it once with
+# BotFather /newapp (Web App URL = https://<worker-host>/app), then put the bot
+# username and the app short name here. Leave either blank to drop the button.
+BOT_USERNAME       = "REPLACE_ME"          # without the @
+MINIAPP_SHORT_NAME = "REPLACE_ME"          # the short name you gave /newapp
+
 # Due-soon alerts (every 5 min).
 ALERT_LEAD_MIN     = "5"                   # warn this many minutes ahead
 ALERT_MIN_PRIORITY = "2"                   # API scale: 1=default, so 2 = above default
@@ -36,6 +42,12 @@ id      = "REPLACE_ME"
 # The */5 entry drives dueSoonAlerts instead; scheduled() dispatches on event.cron.
 [triggers]
 crons = ["30 5 * * *", "30 6 * * *", "*/5 * * * *"]
+
+# src/app.html is the Mini App page; this rule bundles it in as a string.
+[[rules]]
+type   = "Text"
+globs  = ["**/*.html"]
+fallthrough = false
 
 [observability]
 enabled = true

@@ -9,8 +9,11 @@
  *   Vars:    TODOIST_PROJECT_ID, TZ_NAME, TODOIST_DUE_LANG, ALLOWED_CHAT_IDS,
  *            ALLOW_DELETE, CLAUDE_MODEL, CLAUDE_EFFORT,
  *            DIGEST_CHAT_ID, DIGEST_AT, DIGEST_SKIP_EMPTY, SUGGEST_COUNT,
- *            ALERT_LEAD_MIN, ALERT_MIN_PRIORITY, ALERT_CHAT_ID
+ *            ALERT_LEAD_MIN, ALERT_MIN_PRIORITY, ALERT_CHAT_ID,
+ *            BOT_USERNAME, MINIAPP_SHORT_NAME
  */
+
+import APP_HTML from './app.html';
 
 const TD = 'https://api.todoist.com/api/v1';
 const MODEL = 'claude-sonnet-5';
@@ -25,6 +28,22 @@ const TG_LIMIT = 4096; // Telegram rejects sendMessage above this
 // ============================================================ entrypoint ====
 export default {
   async fetch(request, env, ctx) {
+    const path = new URL(request.url).pathname;
+
+    // The Mini App page and the data it reads are the only GET surface here;
+    // everything else this Worker answers is the Telegram webhook.
+    if (path === '/app' || path === '/app/') {
+      return new Response(APP_HTML, {
+        headers: {
+          'content-type': 'text/html; charset=utf-8',
+          // Telegram caches Mini App pages aggressively; revalidate every time
+          // so a deploy is visible without anyone clearing the client cache.
+          'cache-control': 'no-cache',
+        },
+      });
+    }
+    if (path === '/api/tasks') return apiTasks(request, env);
+
     if (request.method !== 'POST') return new Response('ok');
 
     // Telegram proves it's Telegram by echoing the secret we registered.
@@ -688,6 +707,9 @@ async function morningDigest(env) {
     return bits.join(' ');
   };
 
+  const kb = calendarButton(env);
+  let posted = false;
+
   const overdue = due.filter(t => t.due.date.slice(0, 10) < now.date);
   const today = due.filter(t => t.due.date.slice(0, 10) === now.date);
 
@@ -702,18 +724,23 @@ async function morningDigest(env) {
       out.push(...today.map(line));
     }
     out.push('', `<a href="${TD_APP}/project/${env.TODOIST_PROJECT_ID}">Открыть в Todoist</a>`);
-    await say(env, chatId, out.join('\n'), { parse_mode: 'HTML', disable_web_page_preview: true });
+    await say(env, chatId, out.join('\n'), { parse_mode: 'HTML', disable_web_page_preview: true, ...kb });
+    posted = true;
     console.log(`digest: sent ${overdue.length} overdue + ${today.length} today`);
   } else if (env.DIGEST_SKIP_EMPTY === 'false') {
     await say(env, chatId, `🌅 <b>${shortDate(now.date)}</b> — на сегодня ничего не запланировано.`,
-      { parse_mode: 'HTML', disable_web_page_preview: true });
+      { parse_mode: 'HTML', disable_web_page_preview: true, ...kb });
+    posted = true;
   } else {
     console.log('digest: nothing due');
   }
 
   // Follow-up nudge. Runs even on a quiet morning — a day with nothing planned
   // is exactly when picking something off the undated pile is worth suggesting.
-  await suggestUndated(env, chatId, all, nameOf);
+  //
+  // The calendar button rides along with the digest; when the digest stayed
+  // silent the nudge is the only message of the morning, so it carries it.
+  await suggestUndated(env, chatId, all, nameOf, posted ? {} : kb);
 }
 
 /**
@@ -743,7 +770,7 @@ function shuffled(items) {
  * would learn to skim past the message. Recently suggested ids are remembered
  * for a few days on top of that, so chance alone cannot repeat yesterday.
  */
-async function suggestUndated(env, chatId, all, nameOf) {
+async function suggestUndated(env, chatId, all, nameOf, extra = {}) {
   const n = Number(env.SUGGEST_COUNT || 5);
   if (n < 1) return;
 
@@ -768,7 +795,7 @@ async function suggestUndated(env, chatId, all, nameOf) {
   await say(env, chatId,
     `\ud83d\udca1 <b>\u0411\u0435\u0437 \u0441\u0440\u043e\u043a\u0430 \u2014 \u043c\u043e\u0436\u0435\u0442, \u0441\u0435\u0433\u043e\u0434\u043d\u044f?</b>\n${lines.join('\n')}${tail}\n\n`
     + `<i>\u0421\u043a\u0430\u0436\u0438 \u00ab${escapeHtml(picks[0].content)} \u2014 \u0441\u0435\u0433\u043e\u0434\u043d\u044f\u00bb, \u0438 \u043f\u043e\u0441\u0442\u0430\u0432\u043b\u044e \u0441\u0440\u043e\u043a.</i>`,
-    { parse_mode: 'HTML', disable_web_page_preview: true });
+    { parse_mode: 'HTML', disable_web_page_preview: true, ...extra });
 
   // Keep a few rounds of history, but never more than the pool can spare.
   const keep = Math.min(n * 3, Math.max(0, pool.length - n));
@@ -776,6 +803,157 @@ async function suggestUndated(env, chatId, all, nameOf) {
   await env.CHATS.put(RECENT_KEY, JSON.stringify(memo), { expirationTtl: 1209600 });
 
   console.log(`suggest: sent ${lines.length} of ${pool.length} undated, ${recent.length} on cooldown`);
+}
+
+// =============================================================== mini app ===
+/**
+ * Direct link to the Mini App, e.g. https://t.me/my_bot/calendar.
+ *
+ * A direct link and not an inline `web_app` button on purpose: Bot API allows
+ * `web_app` buttons only in private chats, and the digest goes to the family
+ * group. A t.me/<bot>/<app> url button opens the same Mini App everywhere.
+ * Needs BotFather /newapp once; without the two vars the button is omitted.
+ */
+function miniAppLink(env) {
+  const set = v => {
+    const s = (v || '').trim();
+    // The tracked config ships REPLACE_ME placeholders; a button built from one
+    // would look real in the family chat and 404 on tap.
+    return s && s !== 'REPLACE_ME' ? s : null;
+  };
+  const bot = set(env.BOT_USERNAME)?.replace(/^@/, '');
+  const app = set(env.MINIAPP_SHORT_NAME);
+  return bot && app ? `https://t.me/${bot}/${app}` : null;
+}
+
+function calendarButton(env) {
+  const link = miniAppLink(env);
+  if (!link) return {};
+  return { reply_markup: { inline_keyboard: [[{ text: '📅 Календарь', url: link }]] } };
+}
+
+const utf8 = s => new TextEncoder().encode(s);
+const toHex = b => [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+
+async function hmacSha256(keyBytes, dataBytes) {
+  const key = await crypto.subtle.importKey(
+    'raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, dataBytes));
+}
+
+/** Length-independent equality, so a wrong hash leaks nothing through timing. */
+function sameSecret(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
+ * Validate a Mini App launch and return its parsed initData, or null.
+ *
+ * Telegram signs the launch parameters with HMAC-SHA256 keyed by a digest of
+ * the bot token. The page URL is public, so nothing a client sends is trusted
+ * until this passes. `signature` is only part of the separate Ed25519 scheme
+ * for third parties, and Telegram has shipped both "keep it" and "drop it"
+ * variants of the check string, so try both rather than guess.
+ */
+async function verifyInitData(env, initData) {
+  if (!initData || !env.TELEGRAM_BOT_TOKEN) return null;
+
+  const params = new URLSearchParams(initData);
+  const hash = params.get('hash');
+  if (!hash) return null;
+
+  const secret = await hmacSha256(utf8('WebAppData'), utf8(env.TELEGRAM_BOT_TOKEN));
+
+  const checkString = drop => [...params]
+    .filter(([k]) => !drop.includes(k))
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n');
+
+  let ok = false;
+  for (const drop of [['hash'], ['hash', 'signature']]) {
+    if (sameSecret(toHex(await hmacSha256(secret, utf8(checkString(drop)))), hash)) {
+      ok = true;
+      break;
+    }
+  }
+  if (!ok) return null;
+
+  // A signature stays valid forever unless we age it out; a day is long enough
+  // for one session and short enough that a leaked link stops working.
+  const authDate = Number(params.get('auth_date')) * 1000;
+  if (!authDate || Date.now() - authDate > 86400_000) return null;
+
+  try {
+    return { user: JSON.parse(params.get('user') || 'null'), authDate };
+  } catch { return null; }
+}
+
+/**
+ * A valid signature only proves the launch came from Telegram — any stranger who
+ * finds the link gets one too. Membership of the family chat is the actual ACL,
+ * cached briefly so a calendar swipe does not hit the Bot API every time.
+ */
+async function isFamily(env, userId) {
+  if (!userId) return false;
+  const chatId = (env.DIGEST_CHAT_ID || (env.ALLOWED_CHAT_IDS || '').split(',')[0] || '').trim();
+  if (!chatId) return false;
+
+  const key = `member:${chatId}:${userId}`;
+  const cached = await env.CHATS.get(key);
+  if (cached) return cached === '1';
+
+  const r = await tg(env, 'getChatMember', { chat_id: chatId, user_id: userId });
+  const st = r?.ok ? r.result?.status : null;
+  const ok = st === 'creator' || st === 'administrator' || st === 'member'
+    || (st === 'restricted' && r.result?.is_member === true);
+  if (!r?.ok) console.warn('getChatMember:', r?.description);
+  // Cache the "no" for far less time: someone just added to the chat should not
+  // have to wait an hour, and a Bot API hiccup should not lock the family out.
+  await env.CHATS.put(key, ok ? '1' : '0', { expirationTtl: ok ? 3600 : 120 });
+  return ok;
+}
+
+const json = (obj, status = 200) => new Response(JSON.stringify(obj), {
+  status,
+  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+});
+
+/**
+ * Everything the calendar needs, in one shot. The project holds tens of tasks,
+ * not thousands, so range filtering server-side would only add a round trip
+ * every time somebody flips to the next month.
+ */
+async function apiTasks(request, env) {
+  const auth = await verifyInitData(
+    env, (request.headers.get('Authorization') || '').replace(/^tma /i, ''));
+  if (!auth) return json({ error: 'Не получилось подтвердить запуск из Telegram.' }, 401);
+  if (!await isFamily(env, auth.user?.id)) {
+    return json({ error: 'Этот календарь только для участников семейного чата.' }, 403);
+  }
+
+  const [all, people] = await Promise.all([listTasks(env), roster(env)]);
+  const nameOf = Object.fromEntries(people.map(p => [p.id, p.name.split(' ')[0]]));
+
+  return json({
+    today: localParts(env.TZ_NAME || 'Europe/Madrid').date,
+    project: `${TD_APP}/project/${env.TODOIST_PROJECT_ID}`,
+    tasks: all.map(t => ({
+      id: String(t.id),
+      content: t.content,
+      // Todoist timed dues are floating local time; the client only ever shows
+      // them, never converts, so slicing the string is both right and cheapest.
+      date: t.due?.date ? t.due.date.slice(0, 10) : null,
+      time: t.due?.date && t.due.date.length > 10 ? t.due.date.slice(11, 16) : null,
+      priority: t.priority ?? 1,
+      recurring: !!t.due?.is_recurring,
+      who: t.responsible_uid ? nameOf[String(t.responsible_uid)] ?? null : null,
+      url: `${TD_APP}/task/${t.id}`,
+    })),
+  });
 }
 
 // ======================================================== due-soon alerts ===

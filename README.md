@@ -28,6 +28,7 @@ sees it, so any capability added as a tool works in both channels automatically.
 
 ```
 src/index.js            the Worker — everything lives here
+src/app.html            the Mini App page, bundled in as a string (§9)
 wrangler.toml           non-secret config; project id and timezone are filled in
 scripts/wg.sh           wrangler wrapper — prefers wrangler.local.toml
 scripts/set-webhook.sh  register the Telegram webhook
@@ -69,6 +70,8 @@ fork should change the project, chat and timezone (see §3.3).
 | `DIGEST_AT` | `07:30` | morning digest, local time — see §7 |
 | `ALLOWED_CHAT_IDS` | `REPLACE_ME` | comma-separated Telegram chat ids |
 | `ALLOW_DELETE` | `false` | deletes are mapped to complete |
+| `BOT_USERNAME` | `REPLACE_ME` | for the Mini App link — see §9 |
+| `MINIAPP_SHORT_NAME` | `REPLACE_ME` | BotFather app short name — see §9 |
 
 Project members are read from Todoist at runtime and cached for a day — nothing
 to configure.
@@ -493,7 +496,107 @@ This job costs **no Claude tokens** — it is a plain Todoist read plus a send.
 
 ---
 
-## 9. Safety decisions
+## 9. Mini App — календарь
+
+The morning digest carries a **📅 Календарь** button that opens a Telegram Mini
+App: the project's tasks on a month grid or a week list.
+
+```
+┌──────────────────────────────┐
+│  [  Месяц  ]    Неделя       │
+│  ‹   Сентябрь 2026   ›  Сегодня │
+│  Пн Вт Ср Чт Пт Сб Вс        │
+│      1  2  3  4  5  6        │   ← dots under each day, one per task,
+│   7  8  9 10 11 12 13        │     coloured by priority
+│  …                           │
+│  2 сентября        3 задачи  │
+│  │ Обработка от насекомых    │
+│  │ 09:30 · Антон             │
+│  │ занятие Майи  11:00 · Аня │
+│  │ полить растения  ↻        │
+│                              │
+│  ⚠️ Просрочено · 2           │
+│  ▸ Без срока · 11            │
+└──────────────────────────────┘
+```
+
+Month view opens on today and shows the selected day's tasks underneath; week
+view lists all seven days inline. Both are followed by an overdue block and a
+collapsed "без срока" list. Tapping a task opens it in Todoist.
+
+### Why a direct link and not a `web_app` button
+
+Bot API allows inline `web_app` buttons **only in private chats**, and the
+digest goes to the family group. So the button is an ordinary `url` button
+pointing at `https://t.me/<bot>/<app>` — a Direct Link Mini App, which opens
+the same page from a group just as well.
+
+The cost is one-time BotFather setup (§9.2). If `BOT_USERNAME` or
+`MINIAPP_SHORT_NAME` is missing or still `REPLACE_ME`, the button is simply left
+off the digest — a placeholder button would look real and 404 on tap.
+
+The button rides on the digest. On a morning where the digest stayed silent
+(`DIGEST_SKIP_EMPTY`), the undated nudge carries it instead, so there is exactly
+one button per morning and never zero.
+
+### 9.1 Routes and authorisation
+
+| Route | |
+|---|---|
+| `GET /app` | the page; `no-cache` so a deploy is visible without clearing the Telegram cache |
+| `GET /api/tasks` | every task in the project, normalised for the calendar |
+
+Anything else still goes to the Telegram webhook, unchanged.
+
+The page URL is public, so `/api/tasks` trusts nothing until **two** checks pass:
+
+1. **`initData` signature.** Telegram signs the launch parameters with
+   HMAC-SHA256 keyed by a digest of the bot token; the client sends the raw
+   string back as `Authorization: tma <initData>`. Launches older than 24 h are
+   rejected so a copied link stops working.
+   Telegram has shipped both "include `signature` in the check string" and
+   "exclude it" variants, so both are tried rather than guessed at.
+2. **Membership of the family chat.** A valid signature only proves the launch
+   came from Telegram — any stranger who finds the link gets one too. The real
+   ACL is `getChatMember` against `DIGEST_CHAT_ID`, cached in KV for an hour on
+   success and two minutes on failure, so someone just added to the chat is not
+   locked out for an hour and a Bot API hiccup is not sticky.
+
+### 9.2 BotFather setup
+
+Once, per bot:
+
+1. `/newapp` → pick the bot → title, description, a 640×360 photo.
+2. **Web App URL**: `https://<your-worker-host>/app`.
+3. **Short name**: e.g. `calendar` — this is the last segment of the link.
+
+Then fill in `wrangler.local.toml`:
+
+| var | example | |
+|---|---|---|
+| `BOT_USERNAME` | `my_family_bot` | without the `@` |
+| `MINIAPP_SHORT_NAME` | `calendar` | the short name from step 3 |
+
+and redeploy. Opening `https://t.me/<bot>/<app>` should show the calendar.
+
+### 9.3 Notes
+
+**The page is bundled, not fetched.** `src/app.html` is imported as a string via
+a wrangler `Text` rule, so there is no second origin, no asset bucket and no
+extra request on open.
+
+**Dates never leave string form.** Todoist returns timed dues as floating local
+time; the calendar only ever displays them, so all arithmetic goes through UTC
+noon (`parse`/`addDays`) and no timezone or DST shift can move a task onto the
+neighbouring day.
+
+**Theming is Telegram's.** The page reads `--tg-theme-*` custom properties, so
+light and dark follow the client with no toggle of our own. The fallbacks in
+`:root` only matter when the page is opened in a plain browser.
+
+---
+
+## 10. Safety decisions
 
 - **Chat allowlist** (`ALLOWED_CHAT_IDS`) — the main barrier between the task
   list and the open internet.
@@ -510,7 +613,7 @@ This job costs **no Claude tokens** — it is a plain Todoist read plus a send.
 
 ---
 
-## 10. Gotchas
+## 11. Gotchas
 
 - **Todoist REST v2 was shut down in February 2026.** Anything on Stack Overflow
   using `/rest/v2/` is dead. Use `/api/v1/`.
@@ -542,10 +645,12 @@ This job costs **no Claude tokens** — it is a plain Todoist read plus a send.
 
 ---
 
-## 11. Possible next steps
+## 12. Possible next steps
 
 - Inline keyboard buttons for confirm-before-delete instead of the on/off flag.
 - Re-nagging for missed high-priority alerts (deliberately absent today, see §8).
 - Sections support (e.g. groceries into a dedicated section). The project has no
   sections today.
+- Completing a task straight from the Mini App calendar (it is read-only
+  today; that needs a signed POST and an optimistic redraw).
 - Durable Object for conversation state if KV consistency ever bites.

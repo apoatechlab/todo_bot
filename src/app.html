@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Календарь</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* Telegram injects --tg-theme-* per client theme; the fallbacks keep the page
+     readable when it is opened in a plain browser during development. */
+  :root {
+    --bg:     var(--tg-theme-bg-color, #ffffff);
+    --card:   var(--tg-theme-secondary-bg-color, #f1f2f6);
+    --text:   var(--tg-theme-text-color, #12161f);
+    --hint:   var(--tg-theme-hint-color, #8a8f99);
+    --accent: var(--tg-theme-button-color, #2f81f7);
+    --onaccent: var(--tg-theme-button-text-color, #ffffff);
+    --link:   var(--tg-theme-link-color, #2f81f7);
+    --danger: var(--tg-theme-destructive-text-color, #e5484d);
+    --p4: #e5484d;
+    --p3: #f0883e;
+    --p2: #2f81f7;
+    --p1: var(--hint);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0;
+    padding: 0 12px calc(24px + env(safe-area-inset-bottom));
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg); padding-top: 10px; }
+
+  /* Segmented month/week switch. */
+  .seg { display: flex; background: var(--card); border-radius: 9px; padding: 2px; }
+  .seg button {
+    flex: 1; border: 0; border-radius: 7px; padding: 7px 0;
+    background: transparent; color: var(--hint);
+    font: inherit; font-weight: 600; cursor: pointer;
+  }
+  .seg button[aria-selected="true"] { background: var(--accent); color: var(--onaccent); }
+
+  .nav { display: flex; align-items: center; gap: 4px; margin: 10px 0 6px; }
+  .nav .title { flex: 1; text-align: center; font-weight: 600; font-size: 16px; }
+  .nav button {
+    border: 0; background: transparent; color: var(--link);
+    font: inherit; font-size: 19px; line-height: 1;
+    padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  }
+  .nav .today { font-size: 14px; font-weight: 600; }
+
+  /* --- month grid --- */
+  .dow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 2px; }
+  .dow div { text-align: center; font-size: 11px; color: var(--hint); padding: 2px 0; }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .cell {
+    aspect-ratio: 1 / 1; border: 0; border-radius: 9px; padding: 3px 0 0;
+    background: var(--card); color: var(--text);
+    font: inherit; font-size: 14px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  .cell.blank { background: transparent; cursor: default; }
+  .cell.dim { color: var(--hint); }
+  .cell.today { outline: 2px solid var(--accent); outline-offset: -2px; font-weight: 700; }
+  .cell[aria-pressed="true"] { background: var(--accent); color: var(--onaccent); }
+  .cell[aria-pressed="true"] .dot { background: var(--onaccent) !important; }
+  .dots { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; max-width: 90%; }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--p1); }
+  .more { font-size: 9px; color: var(--hint); line-height: 5px; }
+
+  /* --- lists --- */
+  h2 { font-size: 13px; font-weight: 600; color: var(--hint); margin: 18px 0 6px; text-transform: none; }
+  h2 .count { font-weight: 400; }
+  .day-head { display: flex; align-items: baseline; gap: 8px; margin: 16px 0 6px; }
+  .day-head .d { font-weight: 600; font-size: 15px; }
+  .day-head.is-today .d { color: var(--accent); }
+  .day-head .n { font-size: 12px; color: var(--hint); }
+
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  li.task {
+    display: flex; align-items: flex-start; gap: 9px;
+    background: var(--card); border-radius: 10px; padding: 10px 12px;
+    cursor: pointer;
+  }
+  li.task .bar { width: 3px; align-self: stretch; border-radius: 2px; background: var(--p1); flex: none; }
+  li.task .body { min-width: 0; flex: 1; }
+  li.task .txt { overflow-wrap: anywhere; }
+  li.task .meta { margin-top: 2px; font-size: 12px; color: var(--hint); }
+  li.task.overdue .time { color: var(--danger); font-weight: 600; }
+
+  .empty { color: var(--hint); font-size: 14px; padding: 8px 2px; }
+  .muted { color: var(--hint); }
+  .center { text-align: center; padding: 40px 16px; color: var(--hint); }
+  .center a { color: var(--link); }
+
+  details.undated { margin-top: 20px; }
+  details.undated summary {
+    cursor: pointer; font-size: 13px; font-weight: 600; color: var(--hint);
+    padding: 6px 0; list-style: none;
+  }
+  details.undated summary::-webkit-details-marker { display: none; }
+  details.undated summary::before { content: "▸ "; }
+  details.undated[open] summary::before { content: "▾ "; }
+
+  .foot { margin-top: 22px; text-align: center; font-size: 13px; }
+  .foot a { color: var(--link); text-decoration: none; }
+</style>
+</head>
+<body>
+<div id="root"><div class="center">Загружаю…</div></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var tg = window.Telegram && window.Telegram.WebApp;
+  var root = document.getElementById('root');
+
+  var DOW  = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  var MON  = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+              'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+  var MONN = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
+              'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+  var SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн',
+               'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+  // Every date is a plain YYYY-MM-DD string. Arithmetic goes through UTC noon so
+  // no local timezone or DST shift can ever move a task to the neighbouring day.
+  function parse(s) { return new Date(s.slice(0, 10) + 'T12:00:00Z'); }
+  function iso(d) { return d.toISOString().slice(0, 10); }
+  function addDays(s, n) { var d = parse(s); d.setUTCDate(d.getUTCDate() + n); return iso(d); }
+  function dowMon(s) { return (parse(s).getUTCDay() + 6) % 7; }   // 0 = Monday
+  function monthStart(s) { return s.slice(0, 8) + '01'; }
+  function weekStart(s) { return addDays(s, -dowMon(s)); }
+
+  var state = {
+    view: 'month',        // 'month' | 'week'
+    anchor: null,         // any date inside the shown month/week
+    selected: null,       // day opened under the month grid
+    data: null,
+    byDate: {},
+    undated: [],
+  };
+
+  // ------------------------------------------------------------------ data --
+  function load() {
+    var initData = (tg && tg.initData) || '';
+    if (!initData) {
+      root.innerHTML = '<div class="center">Эту страницу нужно открывать '
+        + 'кнопкой «Календарь» в Telegram — снаружи данные не отдаются.</div>';
+      return;
+    }
+    fetch('/api/tasks', { headers: { Authorization: 'tma ' + initData } })
+      .then(function (r) {
+        return r.json().then(function (j) {
+          if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+          return j;
+        });
+      })
+      .then(function (d) {
+        state.data = d;
+        state.anchor = state.anchor || d.today;
+        // Open on today's tasks. Landing on a grid with nothing under it reads
+        // as "no tasks" rather than "pick a day".
+        if (!state.selected) state.selected = d.today;
+        state.byDate = {};
+        state.undated = [];
+        d.tasks.forEach(function (t) {
+          if (!t.date) return void state.undated.push(t);
+          (state.byDate[t.date] = state.byDate[t.date] || []).push(t);
+        });
+        Object.keys(state.byDate).forEach(function (k) {
+          state.byDate[k].sort(function (a, b) {
+            // Timed tasks first, in clock order; then by descending priority.
+            if (!!a.time !== !!b.time) return a.time ? -1 : 1;
+            if (a.time && a.time !== b.time) return a.time < b.time ? -1 : 1;
+            return b.priority - a.priority;
+          });
+        });
+        render();
+      })
+      .catch(function (e) {
+        root.innerHTML = '<div class="center">Не получилось загрузить задачи.<br>'
+          + esc(e.message) + '</div>';
+      });
+  }
+
+  // ------------------------------------------------------------------- ui ---
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function tasksOn(day) { return state.byDate[day] || []; }
+
+  function taskHtml(t) {
+    var overdue = t.date && t.date < state.data.today;
+    var meta = [];
+    if (t.time) meta.push('<span class="time">' + t.time + '</span>');
+    if (t.recurring) meta.push('↻');
+    if (t.who) meta.push(esc(t.who));
+    return '<li class="task' + (overdue ? ' overdue' : '') + '" data-url="' + esc(t.url) + '">'
+      + '<span class="bar" style="background:var(--p' + t.priority + ')"></span>'
+      + '<span class="body"><span class="txt">' + esc(t.content) + '</span>'
+      + (meta.length ? '<span class="meta">' + meta.join(' · ') + '</span>' : '')
+      + '</span></li>';
+  }
+
+  function listHtml(items, emptyText) {
+    if (!items.length) return '<div class="empty">' + emptyText + '</div>';
+    return '<ul>' + items.map(taskHtml).join('') + '</ul>';
+  }
+
+  function monthGrid() {
+    var first = monthStart(state.anchor);
+    var lead = dowMon(first);
+    var days = new Date(Date.UTC(+first.slice(0, 4), +first.slice(5, 7), 0)).getUTCDate();
+    var cells = [];
+
+    for (var i = 0; i < lead; i++) cells.push('<div class="cell blank"></div>');
+    for (var d = 1; d <= days; d++) {
+      var day = first.slice(0, 8) + String(d).padStart(2, '0');
+      var items = tasksOn(day);
+      var cls = 'cell';
+      if (day === state.data.today) cls += ' today';
+      if (day < state.data.today) cls += ' dim';
+      var dots = items.slice(0, 4).map(function (t) {
+        return '<span class="dot" style="background:var(--p' + t.priority + ')"></span>';
+      }).join('');
+      cells.push('<button class="' + cls + '" data-day="' + day + '"'
+        + ' aria-pressed="' + (day === state.selected) + '">'
+        + '<span>' + d + '</span>'
+        + '<span class="dots">' + dots
+        + (items.length > 4 ? '<span class="more">+' + (items.length - 4) + '</span>' : '')
+        + '</span></button>');
+    }
+
+    var sel = state.selected;
+    var below = sel
+      ? '<div class="day-head' + (sel === state.data.today ? ' is-today' : '') + '">'
+        + '<span class="d">' + longDate(sel) + '</span>'
+        + '<span class="n">' + plural(tasksOn(sel).length) + '</span></div>'
+        + listHtml(tasksOn(sel), 'Ничего не запланировано.')
+      : '<div class="empty">Выбери день, чтобы посмотреть задачи.</div>';
+
+    return '<div class="dow">' + DOW.map(function (w) { return '<div>' + w + '</div>'; }).join('')
+      + '</div><div class="grid">' + cells.join('') + '</div>' + below;
+  }
+
+  function weekList() {
+    var start = weekStart(state.anchor);
+    var out = [];
+    for (var i = 0; i < 7; i++) {
+      var day = addDays(start, i);
+      var items = tasksOn(day);
+      out.push('<div class="day-head' + (day === state.data.today ? ' is-today' : '') + '">'
+        + '<span class="d">' + DOW[i] + ', ' + longDate(day) + '</span>'
+        + '<span class="n">' + plural(items.length) + '</span></div>'
+        + listHtml(items, '—'));
+    }
+    return out.join('');
+  }
+
+  function plural(n) {
+    if (!n) return 'пусто';
+    var t = n % 10, h = n % 100;
+    var word = (t === 1 && h !== 11) ? 'задача'
+      : (t >= 2 && t <= 4 && (h < 12 || h > 14)) ? 'задачи' : 'задач';
+    return n + ' ' + word;
+  }
+  function longDate(s) { return +s.slice(8, 10) + ' ' + MON[+s.slice(5, 7) - 1]; }
+  function shortD(s) { return +s.slice(8, 10) + ' ' + SHORT[+s.slice(5, 7) - 1]; }
+
+  function title() {
+    if (state.view === 'month') {
+      var m = MONN[+state.anchor.slice(5, 7) - 1];
+      return m.charAt(0).toUpperCase() + m.slice(1) + ' ' + state.anchor.slice(0, 4);
+    }
+    var a = weekStart(state.anchor);
+    return shortD(a) + ' — ' + shortD(addDays(a, 6));
+  }
+
+  function render() {
+    var overdue = Object.keys(state.byDate)
+      .filter(function (d) { return d < state.data.today; })
+      .sort()
+      .reduce(function (acc, d) { return acc.concat(state.byDate[d]); }, []);
+
+    root.innerHTML =
+      '<header>'
+      + '<div class="seg">'
+      + '<button data-view="month" aria-selected="' + (state.view === 'month') + '">Месяц</button>'
+      + '<button data-view="week" aria-selected="' + (state.view === 'week') + '">Неделя</button>'
+      + '</div>'
+      + '<div class="nav">'
+      + '<button data-step="-1" aria-label="Назад">‹</button>'
+      + '<span class="title">' + title() + '</span>'
+      + '<button data-step="1" aria-label="Вперёд">›</button>'
+      + '<button class="today" data-step="0">Сегодня</button>'
+      + '</div></header>'
+      + (state.view === 'month' ? monthGrid() : weekList())
+      + (overdue.length
+        ? '<h2>⚠️ Просрочено <span class="count">· ' + overdue.length + '</span></h2>'
+          + listHtml(overdue, '')
+        : '')
+      + (state.undated.length
+        ? '<details class="undated"><summary>Без срока · ' + state.undated.length + '</summary>'
+          + listHtml(state.undated, '') + '</details>'
+        : '')
+      + '<div class="foot"><a data-open="' + esc(state.data.project) + '">Открыть в Todoist</a></div>';
+
+    if (tg && tg.BackButton) {
+      if (state.view === 'month' && state.selected) tg.BackButton.show();
+      else tg.BackButton.hide();
+    }
+  }
+
+  // Step by month or by week depending on the current view; 0 jumps home.
+  function step(n) {
+    if (n === 0) {
+      state.anchor = state.data.today;
+      state.selected = state.view === 'month' ? state.data.today : null;
+    } else if (state.view === 'month') {
+      var d = parse(monthStart(state.anchor));
+      d.setUTCMonth(d.getUTCMonth() + n);
+      state.anchor = iso(d);
+      state.selected = null;
+    } else {
+      state.anchor = addDays(weekStart(state.anchor), 7 * n);
+    }
+    render();
+  }
+
+  function openLink(url) {
+    if (tg && tg.openLink) tg.openLink(url);
+    else window.open(url, '_blank');
+  }
+
+  root.addEventListener('click', function (ev) {
+    var el;
+    if ((el = ev.target.closest('[data-view]'))) {
+      state.view = el.dataset.view;
+      if (state.view === 'month' && !state.selected) state.selected = state.data.today;
+      return render();
+    }
+    if ((el = ev.target.closest('[data-step]'))) return step(+el.dataset.step);
+    if ((el = ev.target.closest('[data-day]'))) {
+      state.selected = state.selected === el.dataset.day ? null : el.dataset.day;
+      if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+      return render();
+    }
+    if ((el = ev.target.closest('[data-url]'))) return openLink(el.dataset.url);
+    if ((el = ev.target.closest('[data-open]'))) return openLink(el.dataset.open);
+  });
+
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    if (tg.BackButton) {
+      tg.BackButton.onClick(function () { state.selected = null; render(); });
+    }
+    // The palette follows the client, so a theme switch has to redraw nothing —
+    // CSS variables update themselves. Only the back button needs syncing.
+    tg.onEvent('themeChanged', function () {});
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

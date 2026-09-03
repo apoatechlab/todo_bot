@@ -11,7 +11,7 @@
  *            ALLOW_DELETE, CLAUDE_MODEL, CLAUDE_EFFORT,
  *            DIGEST_CHAT_ID, DIGEST_AT, DIGEST_SKIP_EMPTY, SUGGEST_COUNT,
  *            ALERT_LEAD_MIN, ALERT_MIN_PRIORITY, ALERT_CHAT_ID,
- *            BOT_USERNAME, MINIAPP_SHORT_NAME, DRIVE_ROOT_NAME
+ *            BOT_USERNAME, MINIAPP_SHORT_NAME, DRIVE_ROOT_NAME, DRIVE_ROOT_ID
  */
 
 import APP_HTML from './app.html';
@@ -146,9 +146,21 @@ async function handleUpdate(update, env) {
       return [c, r.total];
     }));
     const used = counts.filter(([, n]) => n > 0);
+    // The id is what you need to pin DRIVE_ROOT_ID or to find the folder after
+    // moving it, and there is nowhere else to read it off.
+    let folder = '';
+    try {
+      const id = await driveRoot(env);
+      folder = `\n\n[Папка архива](https://drive.google.com/drive/folders/${id})`
+        + `\n\`DRIVE_ROOT_ID = "${id}"\``;
+    } catch (e) {
+      folder = `\n\n_Drive не отвечает: ${e.message}_`;
+    }
+
     return void say(env, chatId,
       `*Архив документов* — ${total} шт.\n`
       + (used.length ? used.map(([c, n]) => `• ${c} — ${n}`).join('\n') : '_пока пусто_')
+      + folder
       + `\n\n_Категории: ${cats.join(', ')}._`
       + '\n_Кинь файл или фото — разберу и разложу. «Найди анализы Ксении» — найду._');
   }
@@ -715,11 +727,21 @@ async function driveFolder(env, name, parentId) {
 }
 
 /**
- * The archive root. The bot creates it itself so the whole integration can run
- * on the `drive.file` scope — access to files this app made, and nothing else
- * in the person's Drive. Share it from the Drive UI to let the family in.
+ * The archive root.
+ *
+ * By default the bot creates it, because `drive.file` only reaches files this
+ * app made — a folder someone made by hand in the Drive UI is invisible to it,
+ * and writing into one by id comes back 404.
+ *
+ * DRIVE_ROOT_ID pins it instead. That matters once the folder has been dragged
+ * somewhere — into a shared folder, say, so the family inherits access. The app
+ * keeps its own folder wherever it ends up, but the lookup below searches the
+ * Drive root by name and would quietly start a second archive there. An id does
+ * not move.
  */
 function driveRoot(env) {
+  const pinned = (env.DRIVE_ROOT_ID || '').trim();
+  if (pinned && pinned !== 'REPLACE_ME') return Promise.resolve(pinned);
   return driveFolder(env, env.DRIVE_ROOT_NAME || 'Документы семьи', 'root');
 }
 

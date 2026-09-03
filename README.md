@@ -74,6 +74,7 @@ fork should change the project, chat and timezone (see §3.3).
 | `BOT_USERNAME` | `REPLACE_ME` | for the Mini App link — see §9 |
 | `MINIAPP_SHORT_NAME` | `REPLACE_ME` | BotFather app short name — see §9 |
 | `DRIVE_ROOT_NAME` | `Документы семьи` | Drive folder the archive lives in — see §11 |
+| `DRIVE_ROOT_ID` | — | pin that folder by id once it has been moved — see §11.2 |
 
 Project members are read from Todoist at runtime and cached for a day — nothing
 to configure.
@@ -780,13 +781,34 @@ Two things worth repeating:
     there is no queue and no "unverified app" wall — but those two links are.
 - The scope is **`drive.file`** — access to files this app itself created, and
   nothing else in the Drive. That is why the bot makes its own root folder
-  (`DRIVE_ROOT_NAME`) rather than being pointed at an existing one. Share that
-  folder from the Drive UI to let the rest of the family in.
+  rather than being pointed at one you made by hand: a folder created in the
+  Drive UI is invisible to the app, and uploading into it by id comes back 404.
+
+### 11.2 Putting the archive inside a folder you already share
+
+The app can always reach a folder **it** created, wherever that folder later
+ends up. So the way to file into an existing shared folder is to move the bot's
+folder into it, not to point the bot at yours:
+
+1. `/docs` — prints a link to the archive folder and its id.
+2. In Drive, drag that folder into your shared one. Access is inherited, so
+   whoever you shared the parent with now sees the archive.
+3. Pin it: `DRIVE_ROOT_ID = "<the id from /docs>"`, then redeploy.
+
+Step 3 is not optional. Unpinned, the bot finds its root by *searching the Drive
+root for the folder name* — once the folder has been moved, that search finds
+nothing and it quietly starts a second archive where the first one used to be.
+An id does not move.
+
+Pointing `DRIVE_ROOT_ID` at a folder the app did not create needs the full
+`drive` scope instead, which is a sensitive scope: re-authorising, and an
+"unverified app" interstitial on every consent unless the app goes through
+Google's review. Moving the app's own folder gets the same result for free.
 
 Until the secrets are set, sending a file gets a plain "not connected yet"
 reply; nothing else in the bot is affected.
 
-### 11.2 What happens to a file
+### 11.3 What happens to a file
 
 | Step | |
 |---|---|
@@ -805,7 +827,7 @@ forced there is nothing left to reason about.
 Uploads are resumable (two requests: session, then bytes). Multipart would be
 one request but caps at 5 MB, and Telegram hands over up to 20.
 
-### 11.3 Categories are a list; people are not
+### 11.4 Categories are a list; people are not
 
 **Categories are controlled.** Asked freely each time, a model files «анализы»
 today and «медицина» in March, and the archive stops being searchable. The list
@@ -818,7 +840,7 @@ name is worse than one filed under «прочее».
 handled the other way round: the names already in the archive are shown to the
 model so it reuses «Ксения» instead of coining «ксюша».
 
-### 11.4 The index
+### 11.5 The index
 
 One KV key per document, `doc:<driveId>`, with the searchable fields in the
 **key metadata** — KV returns metadata directly from `list()`, so a search walks
@@ -833,7 +855,7 @@ Search matches **every** word of the query — «анализ крови» must 
 every анализ in the archive because one word happened to land — and sorts newest
 first, since "последние анализы" is the question people actually ask.
 
-### 11.5 When the document does not say whose it is
+### 11.6 When the document does not say whose it is
 
 Plenty of documents name no one — a lab printout with the patient field blank, a
 photo of a page. The bot files it under the category alone and **asks**: «Чей
@@ -851,7 +873,7 @@ as *messages about documents are not my business* — it answered a correction
 with "такие сообщения не для меня". The rule now says the opposite in as many
 words, with the phrasings people actually use as examples.
 
-### 11.6 Correcting a mistake
+### 11.7 Correcting a mistake
 
 Misclassification is a matter of when, not if, so it is fixable by saying so:
 «это не анализы, а страховка», «это Ксении, не Майи». That is `refile_document`
@@ -860,7 +882,7 @@ working.
 
 `/docs` prints the archive: how many documents, in which categories.
 
-### 11.7 Who sees what
+### 11.8 Who sees what
 
 These are TIE cards, empadronamiento and medical results. Worth being explicit:
 Drive links are **not** public — they resolve only for people the folder is

@@ -30,6 +30,10 @@ MINIAPP_SHORT_NAME = "REPLACE_ME"          # the short name you gave /newapp
 # authorised it (scope drive.file — it can touch nothing else there); share it
 # with the family from the Drive UI. See README §11 for the one-time OAuth.
 DRIVE_ROOT_NAME    = "Документы семьи"
+# Pin the archive folder by id once you have moved it somewhere — e.g. inside a
+# folder shared with the family. Empty = look it up by name in the Drive root.
+# /docs prints the current id. See README §11.
+DRIVE_ROOT_ID      = ""
 
 # Due-soon alerts (every 5 min).
 ALERT_LEAD_MIN     = "5"                   # warn this many minutes ahead

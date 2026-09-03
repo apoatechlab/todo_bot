@@ -22,14 +22,26 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const SETUP = `
 Нужен OAuth-клиент Google. Если его ещё нет:
 
-  1. https://console.cloud.google.com/projectcreate — создай проект.
-  2. APIs & Services → Library → включи "Google Drive API".
-  3. APIs & Services → OAuth consent screen → External.
-     ВАЖНО: доведи его до "In production" (кнопка Publish app).
-     У приложения в статусе Testing refresh-токен протухает через 7 дней.
-     Добавь себя в Test users, если оставляешь Testing.
-  4. Credentials → Create credentials → OAuth client ID → Desktop app.
-  5. Скопируй Client ID и Client secret.
+  1. Создай проект:
+     https://console.cloud.google.com/projectcreate
+
+  2. Включи Google Drive API:
+     https://console.cloud.google.com/apis/library/drive.googleapis.com
+
+  3. Настрой Google Auth Platform (бывший "OAuth consent screen"):
+     https://console.cloud.google.com/auth/overview
+     Кнопка "Get started" → App name, свой email → Audience: External
+     → контактный email → согласиться с политикой → Create.
+
+  4. Опубликуй приложение — иначе refresh-токен умрёт через 7 дней:
+     https://console.cloud.google.com/auth/audience
+     Publish app → Confirm. Статус должен стать "In production".
+     Проверку Google проходить НЕ нужно: scope drive.file несенситивный.
+
+  5. Создай клиент:
+     https://console.cloud.google.com/auth/clients
+     Create client → Application type: Desktop app → Create.
+     Скопируй оттуда Client ID и Client secret.
 `;
 
 /**

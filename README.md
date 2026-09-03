@@ -742,11 +742,24 @@ npm run google:auth -- --id=... --secret=...
 The browser half works either way; there is a five-minute window to grant
 consent before it gives up.
 
-Two things the script tells you that are worth repeating:
+Creating the OAuth client, in the console as it stands in 2026 — what used to
+be *APIs & Services → OAuth consent screen* is now **Google Auth Platform**, and
+it opens on a "not configured yet / Get started" wizard:
 
-- **Publish the OAuth consent screen** ("In production"). While it is in
-  *Testing*, Google expires the refresh token after **7 days** and the archive
-  quietly stops working.
+| | |
+|---|---|
+| [Create a project](https://console.cloud.google.com/projectcreate) | |
+| [Enable the Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com) | |
+| [Auth Platform → Get started](https://console.cloud.google.com/auth/overview) | app name, support email, **Audience: External**, contact email, accept the policy |
+| [Audience → Publish app](https://console.cloud.google.com/auth/audience) | moves it out of *Testing* |
+| [Clients → Create client](https://console.cloud.google.com/auth/clients) | **Application type: Desktop app** → gives the id and secret |
+
+Two things worth repeating:
+
+- **Publish the app** ("In production"). While it is in *Testing*, Google
+  expires the refresh token after **7 days** and the archive quietly stops
+  working. Verification is *not* required to publish here — `drive.file` is a
+  non-sensitive scope, so there is no review and no "unverified app" wall.
 - The scope is **`drive.file`** — access to files this app itself created, and
   nothing else in the Drive. That is why the bot makes its own root folder
   (`DRIVE_ROOT_NAME`) rather than being pointed at an existing one. Share that

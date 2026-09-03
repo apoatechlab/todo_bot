@@ -19,9 +19,7 @@ const REDIRECT = `http://127.0.0.1:${PORT}`;
 // The narrow scope: files this app created, and nothing else in the Drive.
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 
-const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-console.log(`
+const SETUP = `
 Нужен OAuth-клиент Google. Если его ещё нет:
 
   1. https://console.cloud.google.com/projectcreate — создай проект.
@@ -31,11 +29,49 @@ console.log(`
      У приложения в статусе Testing refresh-токен протухает через 7 дней.
      Добавь себя в Test users, если оставляешь Testing.
   4. Credentials → Create credentials → OAuth client ID → Desktop app.
-  5. Скопируй Client ID и Client secret сюда.
-`);
+  5. Скопируй Client ID и Client secret.
+`;
 
-const clientId = (await rl.question('Client ID: ')).trim();
-const clientSecret = (await rl.question('Client secret: ')).trim();
+/**
+ * Credentials come from the flags, the environment, or a prompt — in that order.
+ *
+ * The prompt is last because stdin is not always a terminal: run through a
+ * wrapper that does not attach one and readline never resolves, which Node
+ * reports as an unsettled top-level await rather than anything useful. So the
+ * non-interactive paths exist, and a missing terminal says so plainly.
+ */
+const flag = name => {
+  const hit = process.argv.slice(2).find(a => a.startsWith(`--${name}=`));
+  return hit ? hit.slice(name.length + 3) : null;
+};
+
+let clientId = (flag('id') || process.env.GOOGLE_CLIENT_ID || '').trim();
+let clientSecret = (flag('secret') || process.env.GOOGLE_CLIENT_SECRET || '').trim();
+
+if (!clientId || !clientSecret) {
+  if (!process.stdin.isTTY) {
+    console.error(SETUP);
+    console.error(`Ввести их некуда — stdin не терминал (так бывает, когда скрипт
+запускают из обёртки, а не из обычного терминала).
+
+Запусти в обычном терминале:
+
+  npm run google:auth
+
+или передай значения без ввода:
+
+  GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... npm run google:auth
+
+Браузер откроется в любом случае — на согласие Google есть 5 минут.`);
+    process.exit(1);
+  }
+  console.log(SETUP);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  clientId = clientId || (await rl.question('Client ID: ')).trim();
+  clientSecret = clientSecret || (await rl.question('Client secret: ')).trim();
+  rl.close();
+}
+
 if (!clientId || !clientSecret) {
   console.error('Пусто — нечего делать.');
   process.exit(1);
@@ -53,6 +89,7 @@ const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchP
 });
 
 const code = await new Promise((resolve, reject) => {
+  let giveUp;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, REDIRECT);
     const got = url.searchParams.get('code');
@@ -60,16 +97,32 @@ const code = await new Promise((resolve, reject) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(`<meta charset="utf-8"><body style="font:16px system-ui;padding:40px">
       ${got ? '✅ Готово — возвращайся в терминал.' : `❌ ${err || 'нет кода'}`}</body>`);
+    clearTimeout(giveUp);
     server.close();
     got ? resolve(got) : reject(new Error(err || 'no code in redirect'));
   });
   server.listen(PORT, '127.0.0.1', () => {
+    // Nothing should hang forever on a browser tab nobody opened.
+    giveUp = setTimeout(() => {
+      server.close();
+      reject(new Error('Пять минут без ответа от Google — согласие так и не выдали.'));
+    }, 5 * 60_000);
+
     console.log(`\nОткрываю браузер. Если не откроется — зайди сюда вручную:\n\n${authUrl}\n`);
-    const open = process.platform === 'darwin' ? 'open'
+    const opener = process.platform === 'darwin' ? 'open'
       : process.platform === 'win32' ? 'start' : 'xdg-open';
-    spawn(open, [authUrl], { stdio: 'ignore', detached: true }).unref();
+    const child = spawn(opener, [authUrl], { stdio: 'ignore', detached: true });
+    // No opener on this box is not fatal — the URL is on screen above. Without
+    // this listener an ENOENT from spawn would take the whole script down.
+    child.on('error', () => console.log('(браузер сам не открылся — открой ссылку выше)'));
+    child.unref();
   });
-  server.on('error', reject);
+  server.on('error', e => {
+    clearTimeout(giveUp);
+    reject(e.code === 'EADDRINUSE'
+      ? new Error(`Порт ${PORT} занят — закрой то, что его держит, и запусти снова.`)
+      : e);
+  });
 });
 
 const r = await fetch('https://oauth2.googleapis.com/token', {
@@ -106,4 +159,3 @@ console.log(`
 
 Потом: npm run deploy
 `);
-rl.close();

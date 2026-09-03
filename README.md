@@ -727,7 +727,22 @@ npm run google:auth
 
 The script walks through creating the OAuth client, opens the consent screen,
 catches the redirect and prints the three secrets to feed to
-`npm run secret put`. Two things it will tell you but that are worth repeating:
+`npm run secret put`.
+
+**Run it from a real terminal.** It asks for the client id and secret on stdin,
+so a wrapper that does not attach a TTY leaves it waiting forever — Node reports
+that as `Detected unsettled top-level await`, which explains nothing. The script
+now says so plainly instead, and takes the same values without a prompt:
+
+```
+GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... npm run google:auth
+npm run google:auth -- --id=... --secret=...
+```
+
+The browser half works either way; there is a five-minute window to grant
+consent before it gives up.
+
+Two things the script tells you that are worth repeating:
 
 - **Publish the OAuth consent screen** ("In production"). While it is in
   *Testing*, Google expires the refresh token after **7 days** and the archive

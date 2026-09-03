@@ -833,7 +833,25 @@ Search matches **every** word of the query — «анализ крови» must 
 every анализ in the archive because one word happened to land — and sorts newest
 first, since "последние анализы" is the question people actually ask.
 
-### 11.5 Correcting a mistake
+### 11.5 When the document does not say whose it is
+
+Plenty of documents name no one — a lab printout with the patient field blank, a
+photo of a page. The bot files it under the category alone and **asks**: «Чей
+это документ?» File first, ask second, deliberately: an unclaimed document is
+safer in Drive than held hostage to a question nobody answers.
+
+The answer arrives as an ordinary message, so the id of the document just filed
+is kept in KV for six hours and shown in the system prompt under «Последний
+документ», flagged when the owner is missing. «Это анализ Антона» then has
+something concrete to attach to.
+
+That pointer exists because of a bug worth remembering: the prompt used to say
+documents file themselves and to never offer to do it, and the model read that
+as *messages about documents are not my business* — it answered a correction
+with "такие сообщения не для меня". The rule now says the opposite in as many
+words, with the phrasings people actually use as examples.
+
+### 11.6 Correcting a mistake
 
 Misclassification is a matter of when, not if, so it is fixable by saying so:
 «это не анализы, а страховка», «это Ксении, не Майи». That is `refile_document`
@@ -842,7 +860,7 @@ working.
 
 `/docs` prints the archive: how many documents, in which categories.
 
-### 11.6 Who sees what
+### 11.7 Who sees what
 
 These are TIE cards, empadronamiento and medical results. Worth being explicit:
 Drive links are **not** public — they resolve only for people the folder is

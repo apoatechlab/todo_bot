@@ -993,10 +993,22 @@ async function fileIncomingDocument(env, chatId, file, caption, speaker) {
   await indexDoc(env, rec);
   console.log(`doc: filed ${category}/${person || '—'}/${name} (${bytes.byteLength}b)`);
 
+  // The next turn in this chat is very likely about this document — «это анализ
+  // Антона», «это не анализы». Leave a pointer so the model has an id to correct
+  // rather than having to search for one.
+  await env.CHATS.put(`lastdoc:${chatId}`, rec.id, { expirationTtl: 21600 });
+
   const where = `${category}${person ? ` / ${person}` : ''}`;
+  // File first, ask second. A document nobody claimed is still safer in Drive
+  // than held hostage to a question that may never get answered.
+  const ask = !person
+    ? '\n\n<i>Чей это документ? Ответь именем — переложу в его папку.</i>'
+    : guess.confident === false
+      ? '\n\n<i>Не уверен, что разобрал верно — поправь, если не то.</i>'
+      : '';
+
   await say(env, chatId,
-    `📄 <b>${escapeHtml(title)}</b>\n${escapeHtml(where)} · ${escapeHtml(date)}`
-    + (guess.confident === false ? '\n\n<i>Не уверен, что разобрал верно — поправь, если не то.</i>' : ''),
+    `📄 <b>${escapeHtml(title)}</b>\n${escapeHtml(where)} · ${escapeHtml(date)}${ask}`,
     {
       parse_mode: 'HTML',
       disable_web_page_preview: true,
@@ -1090,7 +1102,7 @@ async function putRules(env, rules) {
   await env.CHATS.put('rules', JSON.stringify(rules));
 }
 
-function systemPrompt(env, tasks, people, hidden, rules, marks, cats) {
+function systemPrompt(env, tasks, people, hidden, rules, marks, cats, lastDoc) {
   const tz = env.TZ_NAME || 'Europe/Madrid';
   const lead = Number(env.ALERT_LEAD_MIN || 5);
   return `You are the household task assistant for a family. You operate on exactly ONE Todoist project — every task you create goes there automatically, and you cannot touch anything outside it.
@@ -1114,7 +1126,8 @@ Reminders — raised priority IS the reminder:
 - If a task already exists and someone asks to be reminded about it, raise its priority with update_task and add a time — do not create a duplicate.
 - When you set a reminder, say so and state when the alert will arrive, e.g. «Напомню в 17:55».
 - When the person states a standing preference ("always…", "never…", "с этого момента…", "правило:"), call add_house_rule instead of just agreeing.
-- Documents file themselves: a photo or a file sent to the chat is classified and put in Drive before you ever see the turn, so never offer to do it. When someone asks WHERE a document is — «найди анализы Ксении», «где полис», «скинь прописку» — call find_documents and give the link. If they say something was filed wrongly, find it, then refile_document.
+- Documents file themselves: a photo or a file is classified and put in Drive before you ever see the turn, so never offer to file one. That does NOT mean messages about documents are none of your business — the opposite. Anything said about the document that was just filed is addressed to you: «это анализ Антона», «это Ксении», «это не анализы, а страховка», «это от 5 мая», or a bare name in reply to your question about whose it is. Call refile_document with the id shown under "Последний документ" below. Never answer that such messages are not for you.
+- When someone asks WHERE a document is — «найди анализы Ксении», «где полис», «скинь прописку» — call find_documents and give the link. To fix an older one, find it first, then refile_document.
 - School closures — каникулы, «нет школы», teacher days, a public holiday that shuts the school — are whole-day facts, not tasks. Call add_day_marks, never add_task. This is the one place you DO work out calendar dates yourself: pass ISO YYYY-MM-DD and resolve the year from today, remembering a school year crosses New Year. Put every range from one message into one call.
 - Reply in the language the person wrote in, one or two lines, stating only what changed. No preamble.
 
@@ -1123,6 +1136,11 @@ ${rules.length ? rules.map((r, i) => `${i + 1}. ${r}`).join('\n') : '(none set)'
 
 Document archive categories (find_documents accepts only these):
 ${cats.length ? cats.join(', ') : '(none)'}
+
+Последний документ, загруженный в этот чат — если следующее сообщение о нём, это его id:
+${lastDoc ? `${lastDoc.id} | ${lastDoc.date} · ${lastDoc.title} · ${lastDoc.category}`
+    + `${lastDoc.person ? ` · ${lastDoc.person}` : ' · ЧЕЛОВЕК НЕ УКАЗАН — если назовут имя, это ответ на вопрос, чей он'}`
+  : '(ничего не загружали)'}
 
 Calendar marks — whole days shaded on the shared calendar, not tasks:
 ${marks.length ? marks.map((m, i) => `${i + 1}. ${markLine(m)}`).join('\n') : '(none set)'}
@@ -1137,17 +1155,19 @@ ${hidden > 0 ? `\n(${hidden} further tasks are dated beyond the horizon and not 
 
 // ================================================================ claude ====
 async function converse(env, chatId, userTurn) {
-  const [all, people, history, rules, marks, cats] = await Promise.all([
+  const [all, people, history, rules, marks, cats, lastDocId] = await Promise.all([
     listTasks(env),
     roster(env),
     env.CHATS.get(`hist:${chatId}`, 'json'),
     getRules(env),
     getMarks(env),
     getDocCategories(env),
+    env.CHATS.get(`lastdoc:${chatId}`),
   ]);
 
   const visible = relevantTasks(all);
-  const system = systemPrompt(env, visible, people, all.length - visible.length, rules, marks, cats);
+  const system = systemPrompt(env, visible, people, all.length - visible.length, rules, marks, cats,
+    lastDocId ? await env.CHATS.get(`doc:${lastDocId}`, 'json') : null);
   const messages = [...(history?.messages ?? []), { role: 'user', content: userTurn }];
 
   for (let hop = 0; hop < 5; hop++) {

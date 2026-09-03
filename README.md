@@ -285,6 +285,7 @@ Editing, by voice or text:
 - `/rules reset` — restore defaults
 - `/reset` — clear conversation memory only
 - `/digest` — post the morning digest into this chat right now (§7)
+- `/school` — list the shaded calendar days; `/school reset` clears them (§10)
 
 Cap: 25 rules. House rules are persuasion, not enforcement — if the bot starts
 behaving oddly, `/rules` is the first place to look.
@@ -615,7 +616,86 @@ so overscroll does not flash white.
 
 ---
 
-## 10. Safety decisions
+## 10. Calendar marks — дни без школы
+
+Whole days can be shaded on the calendar. Today there is one kind, `school-off`,
+painted amber: the days Maya's school is shut when it normally would not be.
+
+```
+Пн Вт Ср Чт Пт Сб Вс
+    1  2 [3] 4  5  6      [3] = today, selected
+▓7 ▓8  9 10 11 12 13      ▓   = school closed
+14 15 16 17 18 19 20
+```
+
+### Why not Todoist tasks
+
+They are not tasks. They cannot be completed, have no assignee or priority, and
+arrive in blocks — Christmas is one fortnight, which would be fourteen Todoist
+rows. Worse, every one of them would show up in the morning digest as something
+to do, the undated nudge could offer them, and an accidental «сделано» would
+erase the fact. Keeping them out of the project means none of the existing
+paths — digest, nudge, due-soon alerts — need to learn about them at all.
+
+### Storage
+
+One KV key, `marks`, holding ranges:
+
+```json
+[
+  { "kind": "school-off", "from": "2026-12-22", "to": "2027-01-07", "note": "каникулы" },
+  { "kind": "school-off", "from": "2026-10-12", "note": "Fiesta Nacional" }
+]
+```
+
+`to` is omitted for a single day. A whole school year is ~20 rows and one KV
+read. **Colour is not stored** — it lives in `MARK_KINDS` in code, so restyling
+the calendar never means rewriting stored data. Adding a kind (отпуск, дежурство)
+is one line there plus nothing else: the kind list ships to the page inside
+`/api/tasks`, and the renderer reads its label and colours from the response.
+
+Writes prune anything that ended over two months ago — ranges are absolute
+dates, so otherwise the list grows by a school year every year.
+
+### Management
+
+Same shape as house rules: say it, or list it.
+
+- **In words.** «В школе у Майи каникулы с 22 декабря по 7 января» → one range.
+  Schools publish the year in one go, so `add_day_marks` takes an **array** and
+  the whole calendar can be pasted in a single message.
+- **`/school`** prints the numbered list; `/school reset` clears it.
+- «Убери отметку 3» → `remove_day_mark`.
+
+This is the one place Claude computes a date itself. Everywhere else dates go to
+Todoist verbatim as `due_string` and Todoist parses them; marks have no parser
+behind them, so the tool description tells the model to resolve the year — and
+to remember a school year crosses New Year. Ranges are validated on the way in:
+ISO form, `to` not before `from`, and nothing longer than 120 days, which is the
+tell for «с 22 декабря по 7 января» resolved into the same year.
+
+### Rendering
+
+- **Month grid:** tinted cell background plus a 1px inset ring. Not a dot — dots
+  mean tasks, and giving them a second meaning would make the legend mandatory.
+  Selection still overrides the tint: which day you are looking at matters more
+  than what kind of day it is.
+- **Week view and the selected day:** a chip next to the date, `● педсовет`.
+  Chip text is `--text`, not the mark colour — that amber fails contrast on a
+  light card.
+- **A legend** under the grid, listing only kinds actually present.
+- **Weekends are deliberately not painted.** Saturday and Sunday are always off,
+  so shading them adds no information and would turn half the grid amber. Amber
+  means "a school day that unexpectedly is not one".
+
+Each shaded element carries both hexes inline (`--mark-rgb`, `--mark-rgb-d`) and
+CSS picks between them, because an amber that reads as warm cream on white goes
+olive at the alpha a near-black card needs. Doing the choice in CSS rather than
+in the renderer is what keeps it correct across a live theme switch.
+
+---
+
+## 11. Safety decisions
 
 - **Chat allowlist** (`ALLOWED_CHAT_IDS`) — the main barrier between the task
   list and the open internet.
@@ -632,7 +712,7 @@ so overscroll does not flash white.
 
 ---
 
-## 11. Gotchas
+## 12. Gotchas
 
 - **Todoist REST v2 was shut down in February 2026.** Anything on Stack Overflow
   using `/rest/v2/` is dead. Use `/api/v1/`.
@@ -664,7 +744,7 @@ so overscroll does not flash white.
 
 ---
 
-## 12. Possible next steps
+## 13. Possible next steps
 
 - Inline keyboard buttons for confirm-before-delete instead of the on/off flag.
 - Re-nagging for missed high-priority alerts (deliberately absent today, see §8).

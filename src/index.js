@@ -107,6 +107,7 @@ async function handleUpdate(update, env) {
       'Пиши или наговаривай: «купить молоко завтра», «перенеси дантиста на пятницу», «садик — сделано», «что на сегодня?»\n\n' +
       'Напоминания: «напомни завтра в 18:00 забрать посылку» или «это важно» — подниму приоритет и пришлю сюда сигнал за 5 минут.\n\n' +
       '/digest — прислать утренний дайджест прямо сейчас.\n' +
+      '/school — дни без школы, закрашенные в календаре.\n' +
       '/rules — правила бота, /rules reset — сбросить, /reset — забыть контекст разговора.');
   }
   // Same code path the 07:30 cron takes, posted into this chat on demand —
@@ -118,6 +119,20 @@ async function handleUpdate(update, env) {
   if (cmd === '/reset') {
     await env.CHATS.delete(`hist:${chatId}`);
     return void say(env, chatId, 'Контекст очищен.');
+  }
+  if (cmd === '/school') {
+    if (text.includes('reset')) {
+      await env.CHATS.delete('marks');
+      return void say(env, chatId, 'Отметки в календаре очищены.');
+    }
+    const marks = await getMarks(env);
+    if (!marks.length) {
+      return void say(env, chatId,
+        'Отметок нет. Скажи «в школе каникулы с 22 декабря по 7 января» — закрашу эти дни в календаре.');
+    }
+    return void say(env, chatId,
+      `*Отметки в календаре:*\n${marks.map((m, i) => `${i + 1}. ${markLine(m)}`).join('\n')}\n\n`
+      + '_«убери отметку N» чтобы удалить, /school reset — очистить всё._');
   }
   if (cmd === '/rules') {
     if (text.includes('reset')) {
@@ -317,6 +332,38 @@ const tools = [
     },
   },
   {
+    name: 'add_day_marks',
+    description: 'Shade whole days on the family calendar. Currently only school closures: holidays, teacher days, and public holidays that shut the school. These are NOT tasks — never call add_task for them. A school publishes its year in one go, so pass every range from the message in a SINGLE call.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        marks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['school-off'] },
+              from: { type: 'string', description: 'First day as YYYY-MM-DD. Unlike task dates, you DO resolve this yourself — work the year out from today. A school year crosses New Year, so «с 22 декабря по 7 января» spans two different years.' },
+              to: { type: 'string', description: 'Last day, inclusive, YYYY-MM-DD. Omit for a single day.' },
+              note: { type: 'string', description: 'Short label, e.g. "каникулы", "Fiesta Nacional". Omit if the person gave none.' },
+            },
+            required: ['kind', 'from'],
+          },
+        },
+      },
+      required: ['marks'],
+    },
+  },
+  {
+    name: 'remove_day_mark',
+    description: 'Delete a calendar mark by its number, as shown in the Calendar marks list.',
+    input_schema: {
+      type: 'object',
+      properties: { number: { type: 'integer' } },
+      required: ['number'],
+    },
+  },
+  {
     name: 'remove_house_rule',
     description: 'Delete a standing rule by its number, as shown in the House rules list.',
     input_schema: {
@@ -385,6 +432,41 @@ async function runTool(env, name, args) {
       await putRules(env, rules);
       return { ok: true, number: rules.length, rules };
     }
+    case 'add_day_marks': {
+      const today = localParts(env.TZ_NAME || 'Europe/Madrid').date;
+      const existing = await getMarks(env);
+      const added = [];
+      const rejected = [];
+      for (const raw of args.marks || []) {
+        const { mark, error } = validateMark(raw);
+        if (error) { rejected.push({ input: raw, error }); continue; }
+        // Same kind and same span twice is a repeat, not a second closure.
+        const dup = existing.some(m => m.kind === mark.kind && m.from === mark.from
+          && (m.to || m.from) === (mark.to || mark.from));
+        if (!dup) { existing.push(mark); added.push(mark); }
+      }
+      if (existing.length > MARK_LIMIT) {
+        return { error: `Calendar mark list is full (${MARK_LIMIT}). Remove some first.` };
+      }
+      const marks = await putMarks(env, existing, today);
+      return {
+        ok: added.length > 0,
+        added: added.map(markLine),
+        ...(rejected.length ? { rejected } : {}),
+        marks: marks.map((m, i) => `${i + 1}. ${markLine(m)}`),
+      };
+    }
+    case 'remove_day_mark': {
+      const today = localParts(env.TZ_NAME || 'Europe/Madrid').date;
+      const marks = await getMarks(env);
+      const i = args.number - 1;
+      if (i < 0 || i >= marks.length) {
+        return { error: `No mark ${args.number}. There are ${marks.length}.` };
+      }
+      const [gone] = marks.splice(i, 1);
+      const kept = await putMarks(env, marks, today);
+      return { ok: true, removed: markLine(gone), marks: kept.map((m, n) => `${n + 1}. ${markLine(m)}`) };
+    }
     case 'remove_house_rule': {
       const rules = await getRules(env);
       const i = args.number - 1;
@@ -448,6 +530,84 @@ const DEFAULT_RULES = [
   'Голосовые часто содержат оговорки и «эээ» — вытаскивай смысл, не переноси мусор в название.',
 ];
 
+// ========================================================= calendar marks ===
+/**
+ * Whole-day facts that are not tasks: days the school is closed, and whatever
+ * else the family wants shaded on the calendar later.
+ *
+ * Kept as date ranges in KV rather than as Todoist tasks. They cannot be
+ * "done", have no assignee and live in blocks — two weeks of Christmas
+ * holidays is one row here and would be fourteen tasks there, each of which
+ * the digest would announce and the undated nudge could pick up.
+ *
+ * The colour lives in code, not in KV: storing it would mean rewriting stored
+ * data to restyle the calendar.
+ */
+const MARK_KINDS = {
+  // Two hexes because one cannot serve both cards: the amber that reads as a
+  // warm cream on white turns olive at the alpha a near-black card needs.
+  'school-off': { label: 'Нет школы', color: '#e5a50a', colorDark: '#f5c451' },
+};
+
+const MARK_LIMIT = 200;          // a decade of school years
+const MARK_MAX_DAYS = 120;       // Spanish summer break is ~75; longer means a misparse
+
+const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+/** Date arithmetic on YYYY-MM-DD via UTC noon, so no zone or DST can shift it. */
+function shiftDate(isoDate, days) {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+const daysBetween = (from, to) =>
+  Math.round((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86400000);
+
+async function getMarks(env) {
+  const stored = await env.CHATS.get('marks', 'json');
+  return Array.isArray(stored) ? stored : [];
+}
+
+/**
+ * Ranges are absolute dates, so without pruning the list grows by a school
+ * year every year. Anything that ended over two months ago is history.
+ */
+async function putMarks(env, marks, today) {
+  const cutoff = shiftDate(today, -60);
+  const kept = marks
+    .filter(m => (m.to || m.from) >= cutoff)
+    .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  await env.CHATS.put('marks', JSON.stringify(kept));
+  return kept;
+}
+
+/** Normalise one mark from the model, or explain why it is unusable. */
+function validateMark(m) {
+  if (!m || !MARK_KINDS[m.kind]) {
+    return { error: `kind must be one of ${Object.keys(MARK_KINDS).join(', ')}` };
+  }
+  if (!isDate(m.from)) return { error: `"from" must be YYYY-MM-DD, got ${JSON.stringify(m.from)}` };
+  const to = m.to == null || m.to === '' ? m.from : m.to;
+  if (!isDate(to)) return { error: `"to" must be YYYY-MM-DD, got ${JSON.stringify(m.to)}` };
+  if (to < m.from) return { error: `"to" (${to}) is before "from" (${m.from})` };
+  const span = daysBetween(m.from, to) + 1;
+  if (span > MARK_MAX_DAYS) {
+    return { error: `${m.from}…${to} spans ${span} days — check the year, that looks like a misparse` };
+  }
+  const out = { kind: m.kind, from: m.from };
+  if (to !== m.from) out.to = to;
+  const note = (m.note || '').trim();
+  if (note) out.note = note.slice(0, 60);
+  return { mark: out };
+}
+
+/** "22 дек — 7 янв · каникулы" for the /school listing and the model's context. */
+function markLine(m) {
+  const range = m.to ? `${shortDate(m.from)} — ${shortDate(m.to)}` : shortDate(m.from);
+  return `${range} · ${MARK_KINDS[m.kind]?.label ?? m.kind}${m.note ? ` (${m.note})` : ''}`;
+}
+
 async function getRules(env) {
   const stored = await env.CHATS.get('rules', 'json');
   return stored ?? DEFAULT_RULES.slice();
@@ -456,7 +616,7 @@ async function putRules(env, rules) {
   await env.CHATS.put('rules', JSON.stringify(rules));
 }
 
-function systemPrompt(env, tasks, people, hidden, rules) {
+function systemPrompt(env, tasks, people, hidden, rules, marks) {
   const tz = env.TZ_NAME || 'Europe/Madrid';
   const lead = Number(env.ALERT_LEAD_MIN || 5);
   return `You are the household task assistant for a family. You operate on exactly ONE Todoist project — every task you create goes there automatically, and you cannot touch anything outside it.
@@ -480,10 +640,14 @@ Reminders — raised priority IS the reminder:
 - If a task already exists and someone asks to be reminded about it, raise its priority with update_task and add a time — do not create a duplicate.
 - When you set a reminder, say so and state when the alert will arrive, e.g. «Напомню в 17:55».
 - When the person states a standing preference ("always…", "never…", "с этого момента…", "правило:"), call add_house_rule instead of just agreeing.
+- School closures — каникулы, «нет школы», teacher days, a public holiday that shuts the school — are whole-day facts, not tasks. Call add_day_marks, never add_task. This is the one place you DO work out calendar dates yourself: pass ISO YYYY-MM-DD and resolve the year from today, remembering a school year crosses New Year. Put every range from one message into one call.
 - Reply in the language the person wrote in, one or two lines, stating only what changed. No preamble.
 
 House rules (set by the family; follow them unless they conflict with the fixed behaviour above):
 ${rules.length ? rules.map((r, i) => `${i + 1}. ${r}`).join('\n') : '(none set)'}
+
+Calendar marks — whole days shaded on the shared calendar, not tasks:
+${marks.length ? marks.map((m, i) => `${i + 1}. ${markLine(m)}`).join('\n') : '(none set)'}
 
 Members:
 ${people.length ? people.map(p => `- ${p.name} (id ${p.id})`).join('\n') : '- (personal project, no members)'}
@@ -495,15 +659,16 @@ ${hidden > 0 ? `\n(${hidden} further tasks are dated beyond the horizon and not 
 
 // ================================================================ claude ====
 async function converse(env, chatId, userTurn) {
-  const [all, people, history, rules] = await Promise.all([
+  const [all, people, history, rules, marks] = await Promise.all([
     listTasks(env),
     roster(env),
     env.CHATS.get(`hist:${chatId}`, 'json'),
     getRules(env),
+    getMarks(env),
   ]);
 
   const visible = relevantTasks(all);
-  const system = systemPrompt(env, visible, people, all.length - visible.length, rules);
+  const system = systemPrompt(env, visible, people, all.length - visible.length, rules, marks);
   const messages = [...(history?.messages ?? []), { role: 'user', content: userTurn }];
 
   for (let hop = 0; hop < 5; hop++) {
@@ -949,11 +1114,15 @@ async function apiTasks(request, env) {
     return json({ error: 'Этот календарь только для участников семейного чата.' }, 403);
   }
 
-  const [all, people] = await Promise.all([listTasks(env), roster(env)]);
+  const [all, people, marks] = await Promise.all([listTasks(env), roster(env), getMarks(env)]);
   const nameOf = Object.fromEntries(people.map(p => [p.id, p.name.split(' ')[0]]));
 
   return json({
     today: localParts(env.TZ_NAME || 'Europe/Madrid').date,
+    // Kinds ride along with the marks so a new one — or a restyle — is a change
+    // in MARK_KINDS alone, with nothing to keep in sync on the page.
+    marks,
+    markKinds: MARK_KINDS,
     project: `${TD_APP}/project/${env.TODOIST_PROJECT_ID}`,
     tasks: all.map(t => ({
       id: String(t.id),

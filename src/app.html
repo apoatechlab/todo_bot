@@ -44,6 +44,24 @@
     --fb-accent: #5288c1;
     --fb-link: #6ab3f3;
   }
+  /* Shading alpha for calendar marks. A tint tuned for a white card reads as
+     mud on a near-black one, so dark gets a stronger one. Keeping it here — not
+     in the inline style the renderer writes — is what makes it survive a live
+     theme switch without a redraw. */
+  :root { --mark-a: .18; --mark-b: .45; }
+  @media (prefers-color-scheme: dark) { :root { --mark-a: .26; --mark-b: .55; } }
+  :root[data-scheme="dark"] { --mark-a: .26; --mark-b: .55; }
+  :root[data-scheme="light"] { --mark-a: .18; --mark-b: .45; }
+
+  /* Every shaded thing carries both hexes inline and picks one here, so the
+     choice is CSS's — that is what keeps it correct after a live theme flip. */
+  .mk { --mrgb: var(--mark-rgb); --mc: var(--mark); }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-scheme="light"]) .mk { --mrgb: var(--mark-rgb-d); --mc: var(--mark-d); }
+  }
+  :root[data-scheme="dark"] .mk { --mrgb: var(--mark-rgb-d); --mc: var(--mark-d); }
+  :root[data-scheme="light"] .mk { --mrgb: var(--mark-rgb); --mc: var(--mark); }
+
   :root[data-scheme="light"] {
     color-scheme: light;
     --fb-bg: #ffffff;
@@ -111,6 +129,13 @@
     display: flex; flex-direction: column; align-items: center; gap: 3px;
   }
   .cell.blank { background: transparent; cursor: default; }
+  /* A shaded day keeps its task dots — the tint is a separate fact about the
+     day, so it goes on the background and never on the dots. Selection still
+     wins: which day you are looking at matters more than what kind it is. */
+  .cell.marked {
+    background: rgba(var(--mrgb), var(--mark-a));
+    box-shadow: inset 0 0 0 1px rgba(var(--mrgb), var(--mark-b));
+  }
   .cell.dim { color: var(--hint); }
   .cell.today { outline: 2px solid var(--accent); outline-offset: -2px; font-weight: 700; }
   .cell[aria-pressed="true"] { background: var(--accent); color: var(--onaccent); }
@@ -126,6 +151,22 @@
   .day-head .d { font-weight: 600; font-size: 15px; }
   .day-head.is-today .d { color: var(--accent); }
   .day-head .n { font-size: 12px; color: var(--hint); }
+  /* Text stays --text: the mark colour is a mustard that fails contrast on a
+     light card. The tint alone ties the chip to the shaded cells. */
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    background: rgba(var(--mrgb), var(--mark-a)); color: var(--text); white-space: nowrap;
+  }
+  .chip::before {
+    content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--mc);
+  }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+  .legend span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--hint); }
+  .legend i { width: 11px; height: 11px; border-radius: 4px; display: block;
+              background: rgba(var(--mrgb), var(--mark-a));
+              box-shadow: inset 0 0 0 1px rgba(var(--mrgb), var(--mark-b)); }
 
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   li.task {
@@ -193,6 +234,7 @@
     data: null,
     byDate: {},
     undated: [],
+    markByDate: {},       // YYYY-MM-DD -> the mark covering it
   };
 
   // ------------------------------------------------------------------ data --
@@ -222,6 +264,16 @@
           if (!t.date) return void state.undated.push(t);
           (state.byDate[t.date] = state.byDate[t.date] || []).push(t);
         });
+        // Ranges are stored compactly but looked up per cell, so expand once.
+        // A school year is at most a few hundred marked days.
+        state.markByDate = {};
+        (d.marks || []).forEach(function (m) {
+          var day = m.from, guard = 0;
+          while (day <= (m.to || m.from) && guard++ < 400) {
+            state.markByDate[day] = m;
+            day = addDays(day, 1);
+          }
+        });
         Object.keys(state.byDate).forEach(function (k) {
           state.byDate[k].sort(function (a, b) {
             // Timed tasks first, in clock order; then by descending priority.
@@ -243,6 +295,30 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
   function tasksOn(day) { return state.byDate[day] || []; }
+  function markOn(day) { return state.markByDate[day] || null; }
+  function kindOf(mark) {
+    return (state.data.markKinds || {})[mark.kind] || { label: mark.kind, color: '#e5a50a' };
+  }
+
+  /**
+   * Hand the kind's colour to CSS in both forms it needs: the hex for solid
+   * bits, and a bare "r,g,b" triplet that rgba() can take an alpha from. The
+   * alpha itself lives in the stylesheet so a theme switch retunes it for free.
+   */
+  function rgbOf(hex) {
+    var h = hex.replace('#', '');
+    var n = parseInt(h.length === 3 ? h.replace(/./g, '$&$&') : h, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255].join(',');
+  }
+
+  function paintMark(mark) {
+    var k = kindOf(mark);
+    var dark = k.colorDark || k.color;
+    return '--mark:' + k.color + ';--mark-rgb:' + rgbOf(k.color)
+      + ';--mark-d:' + dark + ';--mark-rgb-d:' + rgbOf(dark);
+  }
+
+  function markLabel(mark) { return mark.note || kindOf(mark).label; }
 
   function taskHtml(t) {
     var overdue = t.date && t.date < state.data.today;
@@ -272,13 +348,16 @@
     for (var d = 1; d <= days; d++) {
       var day = first.slice(0, 8) + String(d).padStart(2, '0');
       var items = tasksOn(day);
+      var mark = markOn(day);
       var cls = 'cell';
+      if (mark) cls += ' marked mk';
       if (day === state.data.today) cls += ' today';
       if (day < state.data.today) cls += ' dim';
       var dots = items.slice(0, 4).map(function (t) {
         return '<span class="dot" style="background:var(--p' + t.priority + ')"></span>';
       }).join('');
       cells.push('<button class="' + cls + '" data-day="' + day + '"'
+        + (mark ? ' style="' + paintMark(mark) + '" title="' + esc(markLabel(mark)) + '"' : '')
         + ' aria-pressed="' + (day === state.selected) + '">'
         + '<span>' + d + '</span>'
         + '<span class="dots">' + dots
@@ -290,12 +369,31 @@
     var below = sel
       ? '<div class="day-head' + (sel === state.data.today ? ' is-today' : '') + '">'
         + '<span class="d">' + longDate(sel) + '</span>'
-        + '<span class="n">' + plural(tasksOn(sel).length) + '</span></div>'
+        + '<span class="n">' + plural(tasksOn(sel).length) + '</span>'
+        + chipHtml(markOn(sel))
+        + '</div>'
         + listHtml(tasksOn(sel), 'Ничего не запланировано.')
       : '<div class="empty">Выбери день, чтобы посмотреть задачи.</div>';
 
     return '<div class="dow">' + DOW.map(function (w) { return '<div>' + w + '</div>'; }).join('')
-      + '</div><div class="grid">' + cells.join('') + '</div>' + below;
+      + '</div><div class="grid">' + cells.join('') + '</div>' + legendHtml() + below;
+  }
+
+  function chipHtml(mark) {
+    if (!mark) return '';
+    return '<span class="chip mk" style="' + paintMark(mark) + '">' + esc(markLabel(mark)) + '</span>';
+  }
+
+  /** Only the kinds actually shaded somewhere, so an unused colour never appears. */
+  function legendHtml() {
+    var seen = {};
+    Object.keys(state.markByDate).forEach(function (d) { seen[state.markByDate[d].kind] = true; });
+    var kinds = Object.keys(seen);
+    if (!kinds.length) return '';
+    return '<div class="legend">' + kinds.map(function (k) {
+      var m = { kind: k };
+      return '<span class="mk" style="' + paintMark(m) + '"><i></i>' + esc(kindOf(m).label) + '</span>';
+    }).join('') + '</div>';
   }
 
   function weekList() {
@@ -306,7 +404,9 @@
       var items = tasksOn(day);
       out.push('<div class="day-head' + (day === state.data.today ? ' is-today' : '') + '">'
         + '<span class="d">' + DOW[i] + ', ' + longDate(day) + '</span>'
-        + '<span class="n">' + plural(items.length) + '</span></div>'
+        + '<span class="n">' + plural(items.length) + '</span>'
+        + chipHtml(markOn(day))
+        + '</div>'
         + listHtml(items, '—'));
     }
     return out.join('');

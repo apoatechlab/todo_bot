@@ -31,6 +31,7 @@ src/index.js            the Worker — everything lives here
 src/app.html            the Mini App page, bundled in as a string (§9)
 wrangler.toml           non-secret config; project id and timezone are filled in
 scripts/wg.sh           wrangler wrapper — prefers wrangler.local.toml
+scripts/google-auth.mjs one-time Google OAuth for the archive (§11)
 scripts/set-webhook.sh  register the Telegram webhook
 scripts/webhook-info.sh webhook status (first place to look when it goes quiet)
 .dev.vars.example       template for `wrangler dev`
@@ -72,12 +73,14 @@ fork should change the project, chat and timezone (see §3.3).
 | `ALLOW_DELETE` | `false` | deletes are mapped to complete |
 | `BOT_USERNAME` | `REPLACE_ME` | for the Mini App link — see §9 |
 | `MINIAPP_SHORT_NAME` | `REPLACE_ME` | BotFather app short name — see §9 |
+| `DRIVE_ROOT_NAME` | `Документы семьи` | Drive folder the archive lives in — see §11 |
 
 Project members are read from Todoist at runtime and cached for a day — nothing
 to configure.
 
 Not in git, and never should be: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
-`ANTHROPIC_API_KEY`, `TODOIST_API_TOKEN`, `GROQ_API_KEY`. They are Cloudflare
+`ANTHROPIC_API_KEY`, `TODOIST_API_TOKEN`, `GROQ_API_KEY`, `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`. They are Cloudflare
 Worker secrets. `.dev.vars` (local dev only) is gitignored; `.dev.vars.example`
 is the empty template. Personal ids live in the gitignored
 `wrangler.local.toml` — see §3.3.
@@ -286,6 +289,7 @@ Editing, by voice or text:
 - `/reset` — clear conversation memory only
 - `/digest` — post the morning digest into this chat right now (§7)
 - `/school` — list the shaded calendar days; `/school reset` clears them (§10)
+- `/docs` — what is in the document archive (§11)
 
 Cap: 25 rules. House rules are persuasion, not enforcement — if the bot starts
 behaving oddly, `/rules` is the first place to look.
@@ -695,7 +699,115 @@ in the renderer is what keeps it correct across a live theme switch.
 
 ---
 
-## 11. Safety decisions
+## 11. Document archive — Google Drive
+
+Throw a scan or a photo at the bot. It works out what the document is, files it
+in Drive under `<категория>/<человек>/`, and remembers enough to find it later:
+
+```
+Кинуть в чат:  [фото справки]  «это анализы Ксении»
+
+  📄 общий анализ крови
+  анализы / Ксения · 2026-08-12
+  [ 📂 Открыть в Drive ]
+
+Спросить:      «найди последние анализы крови Ксении»
+               → название, дата и ссылка
+```
+
+Files land in `Документы семьи/анализы/Ксения/2026-08-12 — общий анализ крови.pdf`.
+The date is the one printed **on** the document — issued, drawn, valid from —
+not the day it was uploaded; upload date is only the fallback.
+
+### 11.1 One-time Google setup
+
+```
+npm run google:auth
+```
+
+The script walks through creating the OAuth client, opens the consent screen,
+catches the redirect and prints the three secrets to feed to
+`npm run secret put`. Two things it will tell you but that are worth repeating:
+
+- **Publish the OAuth consent screen** ("In production"). While it is in
+  *Testing*, Google expires the refresh token after **7 days** and the archive
+  quietly stops working.
+- The scope is **`drive.file`** — access to files this app itself created, and
+  nothing else in the Drive. That is why the bot makes its own root folder
+  (`DRIVE_ROOT_NAME`) rather than being pointed at an existing one. Share that
+  folder from the Drive UI to let the rest of the family in.
+
+Until the secrets are set, sending a file gets a plain "not connected yet"
+reply; nothing else in the bot is affected.
+
+### 11.2 What happens to a file
+
+| Step | |
+|---|---|
+| Intake | `msg.document`, or the largest rendition of `msg.photo`. Telegram re-encodes photos to JPEG, so they carry no `mime_type` of their own |
+| Guards | PDF/JPEG/PNG/WebP/GIF only, and ≤ 20 MB — the hard ceiling on what Telegram lets a bot download. HEIC gets told to resend as a photo rather than a file |
+| Classify | One dedicated Claude call: the bytes as a `document` or `image` block, a forced `file_document` tool call for the schema |
+| File | Find-or-create the folders, resumable upload, keep the `webViewLink` |
+| Index | `doc:<driveId>` in KV |
+
+The classification call is deliberately **not** the conversational one. A 20 MB
+attachment has no business entering the chat history, and the answer has to be a
+filled-in schema rather than prose. Thinking is off on that call because forced
+tool choice and extended thinking cannot be combined — and with the schema
+forced there is nothing left to reason about.
+
+Uploads are resumable (two requests: session, then bytes). Multipart would be
+one request but caps at 5 MB, and Telegram hands over up to 20.
+
+### 11.3 Categories are a list; people are not
+
+**Categories are controlled.** Asked freely each time, a model files «анализы»
+today and «медицина» in March, and the archive stops being searchable. The list
+lives in KV (falling back to the defaults in `DEFAULT_DOC_CATEGORIES`), the
+model must pick from it, and anything it invents anyway is rewritten to
+`прочее` on the way in — a document filed under a category no search will ever
+name is worse than one filed under «прочее».
+
+**People are free text**, because a family gains names no roster has. Drift is
+handled the other way round: the names already in the archive are shown to the
+model so it reuses «Ксения» instead of coining «ксюша».
+
+### 11.4 The index
+
+One KV key per document, `doc:<driveId>`, with the searchable fields in the
+**key metadata** — KV returns metadata directly from `list()`, so a search walks
+the index without reading a single value, and only the handful of records
+actually returned are fetched in full. Metadata caps at 1 KB per key, hence the
+one-letter field names and the clipped title.
+
+A single JSON blob would have been simpler and wrong: two files arriving at once
+would each write back a copy of the list they read, and one would vanish.
+
+Search matches **every** word of the query — «анализ крови» must not return
+every анализ in the archive because one word happened to land — and sorts newest
+first, since "последние анализы" is the question people actually ask.
+
+### 11.5 Correcting a mistake
+
+Misclassification is a matter of when, not if, so it is fixable by saying so:
+«это не анализы, а страховка», «это Ксении, не Майи». That is `refile_document`
+— it renames and moves the file in Drive and re-indexes it, so the link keeps
+working.
+
+`/docs` prints the archive: how many documents, in which categories.
+
+### 11.6 Who sees what
+
+These are TIE cards, empadronamiento and medical results. Worth being explicit:
+Drive links are **not** public — they resolve only for people the folder is
+shared with. Claude sees each document once, to classify it. Telegram keeps its
+own copy of anything sent to a chat, as it already did. The Worker holds no
+copy at all: bytes go straight from Telegram to Drive and are never persisted
+in KV.
+
+---
+
+## 12. Safety decisions
 
 - **Chat allowlist** (`ALLOWED_CHAT_IDS`) — the main barrier between the task
   list and the open internet.
@@ -712,7 +824,7 @@ in the renderer is what keeps it correct across a live theme switch.
 
 ---
 
-## 12. Gotchas
+## 13. Gotchas
 
 - **Todoist REST v2 was shut down in February 2026.** Anything on Stack Overflow
   using `/rest/v2/` is dead. Use `/api/v1/`.
@@ -744,7 +856,7 @@ in the renderer is what keeps it correct across a live theme switch.
 
 ---
 
-## 13. Possible next steps
+## 14. Possible next steps
 
 - Inline keyboard buttons for confirm-before-delete instead of the on/off flag.
 - Re-nagging for missed high-priority alerts (deliberately absent today, see §8).

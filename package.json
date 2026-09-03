@@ -10,7 +10,8 @@
     "tail": "./scripts/wg.sh tail",
     "secret": "./scripts/wg.sh secret",
     "webhook:set": "bash scripts/set-webhook.sh",
-    "webhook:info": "bash scripts/webhook-info.sh"
+    "webhook:info": "bash scripts/webhook-info.sh",
+    "google:auth": "node scripts/google-auth.mjs"
   },
   "devDependencies": {
     "wrangler": "^4"

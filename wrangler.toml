@@ -26,6 +26,11 @@ SUGGEST_COUNT      = "5"                   # undated tasks suggested after the d
 BOT_USERNAME       = "REPLACE_ME"          # without the @
 MINIAPP_SHORT_NAME = "REPLACE_ME"          # the short name you gave /newapp
 
+# Document archive. The bot creates this folder in the Drive of whoever
+# authorised it (scope drive.file — it can touch nothing else there); share it
+# with the family from the Drive UI. See README §11 for the one-time OAuth.
+DRIVE_ROOT_NAME    = "Документы семьи"
+
 # Due-soon alerts (every 5 min).
 ALERT_LEAD_MIN     = "5"                   # warn this many minutes ahead
 ALERT_MIN_PRIORITY = "2"                   # API scale: 1=default, so 2 = above default

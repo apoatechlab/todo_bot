@@ -5,3 +5,8 @@ TELEGRAM_WEBHOOK_SECRET=
 ANTHROPIC_API_KEY=
 TODOIST_API_TOKEN=
 GROQ_API_KEY=
+
+# Google Drive for the document archive. Get all three with: npm run google:auth
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=

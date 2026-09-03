@@ -5,12 +5,13 @@
  * Bindings expected:
  *   KV namespace: CHATS
  *   Secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, ANTHROPIC_API_KEY,
- *            TODOIST_API_TOKEN, GROQ_API_KEY
+ *            TODOIST_API_TOKEN, GROQ_API_KEY,
+ *            GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN
  *   Vars:    TODOIST_PROJECT_ID, TZ_NAME, TODOIST_DUE_LANG, ALLOWED_CHAT_IDS,
  *            ALLOW_DELETE, CLAUDE_MODEL, CLAUDE_EFFORT,
  *            DIGEST_CHAT_ID, DIGEST_AT, DIGEST_SKIP_EMPTY, SUGGEST_COUNT,
  *            ALERT_LEAD_MIN, ALERT_MIN_PRIORITY, ALERT_CHAT_ID,
- *            BOT_USERNAME, MINIAPP_SHORT_NAME
+ *            BOT_USERNAME, MINIAPP_SHORT_NAME, DRIVE_ROOT_NAME
  */
 
 import APP_HTML from './app.html';
@@ -97,6 +98,22 @@ async function handleUpdate(update, env) {
       return void say(env, chatId, `⚠️ Не смог разобрать голосовое: ${e.message}`);
     }
   }
+  // A file or a photo goes to the archive, not into the task loop. Photos have
+  // no mime_type of their own — Telegram re-encodes every one to JPEG — and the
+  // last entry of the array is the largest rendition.
+  const upload = msg.document
+    || (msg.photo?.length ? { ...msg.photo[msg.photo.length - 1], mime_type: 'image/jpeg' } : null);
+  if (upload) {
+    await tg(env, 'sendChatAction', { chat_id: chatId, action: 'upload_document' });
+    try {
+      await fileIncomingDocument(env, chatId, upload, msg.caption, msg.from?.first_name);
+    } catch (e) {
+      console.error('doc', e.stack);
+      await say(env, chatId, `⚠️ Не смог положить документ в архив: ${e.message}`);
+    }
+    return;
+  }
+
   if (!text) return;
 
   // In a group, commands arrive as "/rules@botname" — strip the mention.
@@ -108,6 +125,7 @@ async function handleUpdate(update, env) {
       'Напоминания: «напомни завтра в 18:00 забрать посылку» или «это важно» — подниму приоритет и пришлю сюда сигнал за 5 минут.\n\n' +
       '/digest — прислать утренний дайджест прямо сейчас.\n' +
       '/school — дни без школы, закрашенные в календаре.\n' +
+      '/docs — архив документов; кинь файл или фото, и он туда попадёт.\n' +
       '/rules — правила бота, /rules reset — сбросить, /reset — забыть контекст разговора.');
   }
   // Same code path the 07:30 cron takes, posted into this chat on demand —
@@ -119,6 +137,20 @@ async function handleUpdate(update, env) {
   if (cmd === '/reset') {
     await env.CHATS.delete(`hist:${chatId}`);
     return void say(env, chatId, 'Контекст очищен.');
+  }
+  if (cmd === '/docs') {
+    const cats = await getDocCategories(env);
+    const { total } = await searchDocs(env, { limit: 1 });
+    const counts = await Promise.all(cats.map(async c => {
+      const r = await searchDocs(env, { category: c, limit: 1 });
+      return [c, r.total];
+    }));
+    const used = counts.filter(([, n]) => n > 0);
+    return void say(env, chatId,
+      `*Архив документов* — ${total} шт.\n`
+      + (used.length ? used.map(([c, n]) => `• ${c} — ${n}`).join('\n') : '_пока пусто_')
+      + `\n\n_Категории: ${cats.join(', ')}._`
+      + '\n_Кинь файл или фото — разберу и разложу. «Найди анализы Ксении» — найду._');
   }
   if (cmd === '/school') {
     if (text.includes('reset')) {
@@ -364,6 +396,34 @@ const tools = [
     },
   },
   {
+    name: 'find_documents',
+    description: 'Search the family document archive in Google Drive — анализы, страховки, прописка, TIE, договоры, счета. Call this whenever someone asks to find, show or send a document. Returns titles, dates and a Drive link for each.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        person: { type: 'string', description: 'Whose document, e.g. «Ксения». Omit if nobody was named.' },
+        category: { type: 'string', description: 'One of the archive categories, if the person named one.' },
+        query: { type: 'string', description: 'Distinctive words from the title, e.g. «анализ крови». EVERY word must appear in the title, so pass only the ones that matter — not «найди мне последние».' },
+        limit: { type: 'integer', description: 'How many to return. Default 5; pass 1 for «последний».' },
+      },
+    },
+  },
+  {
+    name: 'refile_document',
+    description: 'Fix a document that was filed wrongly — move it to another category or person, correct its date or title. Use after «это не анализы, а страховка» or «это Ксении». Call find_documents first to get the id.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        document_id: { type: 'string' },
+        category: { type: 'string' },
+        person: { type: 'string', description: 'Empty string files it as a household document with no owner.' },
+        date: { type: 'string', description: 'YYYY-MM-DD.' },
+        title: { type: 'string' },
+      },
+      required: ['document_id'],
+    },
+  },
+  {
     name: 'remove_house_rule',
     description: 'Delete a standing rule by its number, as shown in the House rules list.',
     input_schema: {
@@ -467,6 +527,53 @@ async function runTool(env, name, args) {
       const kept = await putMarks(env, marks, today);
       return { ok: true, removed: markLine(gone), marks: kept.map((m, n) => `${n + 1}. ${markLine(m)}`) };
     }
+    case 'find_documents': {
+      const cats = await getDocCategories(env);
+      const category = args.category && cats.includes(args.category) ? args.category : undefined;
+      const { total, docs } = await searchDocs(env, { ...args, category });
+      if (!docs.length) {
+        return { found: 0, note: 'Ничего не нашлось.', categories: cats,
+          hint: 'Попробуй без query или с другой категорией.' };
+      }
+      return {
+        found: total,
+        showing: docs.length,
+        documents: docs.map(d => ({
+          id: d.id, title: d.title, date: d.date, person: d.person || null,
+          category: d.category, link: d.link,
+        })),
+      };
+    }
+    case 'refile_document': {
+      const rec = await env.CHATS.get(`doc:${args.document_id}`, 'json');
+      if (!rec) return { error: `Нет документа ${args.document_id}. Найди его через find_documents.` };
+
+      const cats = await getDocCategories(env);
+      if (args.category && !cats.includes(args.category)) {
+        return { error: `Категория «${args.category}» не из списка: ${cats.join(', ')}` };
+      }
+      const next = {
+        ...rec,
+        category: args.category ?? rec.category,
+        person: args.person !== undefined ? String(args.person).trim() : rec.person,
+        date: /^\d{4}-\d{2}-\d{2}$/.test(args.date || '') ? args.date : rec.date,
+        title: args.title ? String(args.title).trim().slice(0, 90) : rec.title,
+      };
+
+      const root = await driveRoot(env);
+      const catDir = await driveFolder(env, next.category, root);
+      const dir = next.person ? await driveFolder(env, next.person, catDir) : catDir;
+      const name = `${next.date} — ${next.title}.${DOC_MIME[rec.mimeType] || 'bin'}`
+        .replace(/[/\\]/g, '-');
+      const moved = await driveMove(env, rec.id, { name, parentId: dir, oldParentId: rec.folderId });
+
+      next.folderId = dir;
+      next.fileName = moved.name ?? name;
+      next.link = moved.webViewLink ?? rec.link;
+      await indexDoc(env, next);
+      return { ok: true, document: { id: next.id, title: next.title, date: next.date,
+        person: next.person || null, category: next.category, link: next.link } };
+    }
     case 'remove_house_rule': {
       const rules = await getRules(env);
       const i = args.number - 1;
@@ -529,6 +636,373 @@ const DEFAULT_RULES = [
   'Если названо имя члена семьи — назначь задачу на него.',
   'Голосовые часто содержат оговорки и «эээ» — вытаскивай смысл, не переноси мусор в название.',
 ];
+
+// =========================================================== google drive ===
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const DRIVE_API = 'https://www.googleapis.com/drive/v3';
+const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
+const FOLDER_MIME = 'application/vnd.google-apps.folder';
+
+/**
+ * Google access tokens live an hour; the refresh token is the long-lived secret
+ * and never leaves the Worker. Cache the access token so a burst of uploads
+ * costs one token exchange, and retire ours early so an upload that started
+ * just before expiry cannot finish with a dead one.
+ */
+async function driveToken(env) {
+  const cached = await env.CHATS.get('gdrive:token');
+  if (cached) return cached;
+
+  const r = await fetch(GOOGLE_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      refresh_token: env.GOOGLE_REFRESH_TOKEN,
+      grant_type: 'refresh_token',
+    }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !d.access_token) {
+    // invalid_grant means the refresh token was revoked or aged out — that
+    // needs a human, so say which of the two it is rather than "Drive failed".
+    const why = d.error === 'invalid_grant'
+      ? 'refresh-токен Google отозван или истёк — нужно перевыпустить (npm run google:auth)'
+      : `Google OAuth ${r.status}: ${JSON.stringify(d).slice(0, 200)}`;
+    throw new Error(why);
+  }
+  await env.CHATS.put('gdrive:token', d.access_token,
+    { expirationTtl: Math.max(60, (d.expires_in || 3600) - 300) });
+  return d.access_token;
+}
+
+async function drive(env, path, { method = 'GET', body } = {}) {
+  const token = await driveToken(env);
+  const r = await fetch(DRIVE_API + path, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`Drive ${method} ${path} → ${r.status} ${(await r.text()).slice(0, 200)}`);
+  return r.status === 204 ? null : r.json();
+}
+
+/** Drive query strings are single-quoted; a name with an apostrophe would end one. */
+const driveQuote = s => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+/**
+ * Find or create a folder under `parentId`, caching the id for a month.
+ *
+ * Two requests the first time a category or person appears, none afterwards —
+ * which matters because a Worker invocation gets 50 subrequests in total.
+ */
+async function driveFolder(env, name, parentId) {
+  const key = `gdrive:dir:${parentId}:${name}`;
+  const hit = await env.CHATS.get(key);
+  if (hit) return hit;
+
+  const q = `name = '${driveQuote(name)}' and '${driveQuote(parentId)}' in parents`
+    + ` and mimeType = '${FOLDER_MIME}' and trashed = false`;
+  const found = await drive(env, `/files?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`);
+  const id = found.files?.[0]?.id ?? (await drive(env, '/files?fields=id', {
+    method: 'POST',
+    body: { name, mimeType: FOLDER_MIME, parents: [parentId] },
+  })).id;
+
+  await env.CHATS.put(key, id, { expirationTtl: 2592000 });
+  return id;
+}
+
+/**
+ * The archive root. The bot creates it itself so the whole integration can run
+ * on the `drive.file` scope — access to files this app made, and nothing else
+ * in the person's Drive. Share it from the Drive UI to let the family in.
+ */
+function driveRoot(env) {
+  return driveFolder(env, env.DRIVE_ROOT_NAME || 'Документы семьи', 'root');
+}
+
+/**
+ * Resumable upload: one request for a session URL, one for the bytes.
+ * Multipart would be a single request but caps at 5 MB, and Telegram hands us
+ * up to 20.
+ */
+async function driveUpload(env, { name, mimeType, parentId, bytes }) {
+  const token = await driveToken(env);
+  const start = await fetch(`${DRIVE_UPLOAD}?uploadType=resumable&fields=id,name,webViewLink`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'content-type': 'application/json; charset=UTF-8',
+      'X-Upload-Content-Type': mimeType,
+      'X-Upload-Content-Length': String(bytes.byteLength),
+    },
+    body: JSON.stringify({ name, parents: [parentId] }),
+  });
+  if (!start.ok) {
+    throw new Error(`Drive upload session → ${start.status} ${(await start.text()).slice(0, 200)}`);
+  }
+  const session = start.headers.get('location');
+  if (!session) throw new Error('Drive returned no upload session URL.');
+
+  const put = await fetch(session, {
+    method: 'PUT',
+    headers: { 'content-type': mimeType },
+    body: bytes,
+  });
+  if (!put.ok) throw new Error(`Drive upload → ${put.status} ${(await put.text()).slice(0, 200)}`);
+  return put.json();
+}
+
+/** Rename and/or move a file that was filed under the wrong heading. */
+async function driveMove(env, fileId, { name, parentId, oldParentId }) {
+  const q = new URLSearchParams({ fields: 'id,name,webViewLink' });
+  if (parentId && parentId !== oldParentId) {
+    q.set('addParents', parentId);
+    q.set('removeParents', oldParentId);
+  }
+  return drive(env, `/files/${fileId}?${q}`, { method: 'PATCH', body: name ? { name } : {} });
+}
+
+// ================================================ document archive (drive) ===
+/**
+ * Throw a scan or a photo at the bot; it works out what the document is, files
+ * it into Drive under <категория>/<человек>/ and remembers enough to find it
+ * again later.
+ *
+ * Categories are a controlled list on purpose. Asked freely every time, a model
+ * will produce «анализы» today and «медицина» next month, and the archive stops
+ * being searchable. People are the opposite — a family gains names the roster
+ * never had — so those stay free text, with the names already used shown to the
+ * model so it reuses a spelling instead of inventing one.
+ */
+const DEFAULT_DOC_CATEGORIES = [
+  'анализы', 'страховка', 'прописка', 'TIE', 'договоры', 'счета', 'школа', 'прочее',
+];
+
+// Telegram will not let a bot download more than this, whatever the plan.
+const MAX_DOC_BYTES = 20 * 1024 * 1024;
+// Base64 inflates by a third, and the Anthropic request cap is 32 MB. Past this
+// the file still gets filed — just classified from its name and caption alone.
+const MAX_VISION_BYTES = 14 * 1024 * 1024;
+
+const DOC_MIME = {
+  'application/pdf': 'pdf',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+
+async function getDocCategories(env) {
+  const stored = await env.CHATS.get('doccats', 'json');
+  return Array.isArray(stored) && stored.length ? stored : DEFAULT_DOC_CATEGORIES.slice();
+}
+
+/** Names already used, so the model reuses «Ксения» instead of coining «ксюша». */
+async function knownPeople(env) {
+  const seen = new Set();
+  let cursor;
+  do {
+    const page = await env.CHATS.list({ prefix: 'doc:', cursor, limit: 1000 });
+    for (const k of page.keys) if (k.metadata?.p) seen.add(k.metadata.p);
+    cursor = page.list_complete ? null : page.cursor;
+  } while (cursor);
+  return [...seen];
+}
+
+/** btoa() over a 20 MB string blows the stack; feed it in chunks. */
+function toBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(out);
+}
+
+const FILE_DOC_TOOL = {
+  name: 'file_document',
+  description: 'Report what this document is so it can be filed.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      category: { type: 'string', description: 'Exactly one value from the allowed list.' },
+      person: { type: 'string', description: 'Who the document is about, in the nominative case («Ксения», «Майя»). Reuse a name from the known list when it is the same person. Omit for a household document that belongs to nobody in particular.' },
+      date: { type: 'string', description: 'The date ON the document (issued, drawn, valid from) as YYYY-MM-DD. Omit if the document shows none — do not substitute today.' },
+      title: { type: 'string', description: 'Short human title in Russian, lowercase unless a proper noun, e.g. «общий анализ крови», «полис Sanitas», «empadronamiento». No dates, no person name — those are stored separately.' },
+      confident: { type: 'boolean', description: 'False if the document is unreadable or you are guessing.' },
+    },
+    required: ['category', 'title', 'confident'],
+  },
+};
+
+/**
+ * One dedicated call, not the conversational one: the reply must be a filled-in
+ * schema, and a 20 MB attachment has no business entering the chat history.
+ *
+ * Thinking is off because forced tool choice and extended thinking cannot be
+ * combined — and with the schema forced there is nothing to reason about.
+ */
+async function classifyDocument(env, { bytes, mimeType, fileName, caption, cats, people, today }) {
+  const content = [];
+  if (bytes && bytes.byteLength <= MAX_VISION_BYTES && DOC_MIME[mimeType]) {
+    content.push(mimeType === 'application/pdf'
+      ? { type: 'document', source: { type: 'base64', media_type: mimeType, data: toBase64(bytes) } }
+      : { type: 'image', source: { type: 'base64', media_type: mimeType, data: toBase64(bytes) } });
+  }
+  content.push({
+    type: 'text',
+    text: [
+      'Определи, что это за документ, и вызови file_document.',
+      fileName ? `Имя файла: ${fileName}` : '',
+      caption ? `Подпись от человека (она важнее того, что ты видишь в файле): ${caption}` : '',
+      content.length === 1 ? 'Сам файл слишком большой, чтобы его показать — суди по имени и подписи.' : '',
+    ].filter(Boolean).join('\n'),
+  });
+
+  const system = `Ты разбираешь семейный архив документов.
+Сегодня ${today}.
+
+Категории — выбери РОВНО ОДНУ из списка, ничего своего:
+${cats.map(c => `- ${c}`).join('\n')}
+Если ничего не подходит — «прочее».
+
+Имена, которые уже встречались (используй ту же форму, если это тот же человек):
+${people.length ? people.map(p => `- ${p}`).join('\n') : '(пока никого)'}
+
+Даты: бери ту, что напечатана в документе — дату выдачи, забора анализа, начала действия. Если её нет, не подставляй сегодняшнюю, просто не заполняй поле.`;
+
+  const res = await claude(env, system, [{ role: 'user', content }], {
+    tools: [FILE_DOC_TOOL],
+    tool_choice: { type: 'tool', name: 'file_document' },
+    thinking: { type: 'disabled' },
+    max_tokens: 1024,
+  });
+
+  const call = res.content?.find(b => b.type === 'tool_use');
+  if (!call) throw new Error('Claude не вернул разбор документа.');
+  return call.input;
+}
+
+/** Index entry. Metadata rides on the KV key so search never reads values. */
+async function indexDoc(env, rec) {
+  await env.CHATS.put(`doc:${rec.id}`, JSON.stringify(rec), {
+    // KV caps key metadata at 1 KB; short field names and a clipped title keep
+    // a Cyrillic record well inside it.
+    metadata: { c: rec.category, p: rec.person || '', d: rec.date || '', t: rec.title.slice(0, 90) },
+  });
+}
+
+/**
+ * Search the archive. One KV list walks the metadata; only the handful of
+ * records actually returned are read in full.
+ */
+async function searchDocs(env, { category, person, query, limit = 5 } = {}) {
+  const needle = (query || '').toLowerCase().trim();
+  const words = needle ? needle.split(/\s+/) : [];
+  const hits = [];
+
+  let cursor;
+  do {
+    const page = await env.CHATS.list({ prefix: 'doc:', cursor, limit: 1000 });
+    for (const k of page.keys) {
+      const m = k.metadata || {};
+      if (category && m.c !== category) continue;
+      if (person && (m.p || '').toLowerCase() !== person.toLowerCase()) continue;
+      // Every word must appear somewhere — «анализ крови» should not match every
+      // анализ in the archive just because one word landed.
+      const hay = `${m.t || ''} ${m.c || ''} ${m.p || ''}`.toLowerCase();
+      if (words.length && !words.every(w => hay.includes(w))) continue;
+      hits.push({ key: k.name, date: m.d || '' });
+    }
+    cursor = page.list_complete ? null : page.cursor;
+  } while (cursor);
+
+  // Newest first — "последние анализы" is the question people actually ask.
+  hits.sort((a, b) => b.date.localeCompare(a.date));
+  const top = hits.slice(0, Math.min(Math.max(limit, 1), 20));
+  const recs = await Promise.all(top.map(h => env.CHATS.get(h.key, 'json')));
+  return { total: hits.length, docs: recs.filter(Boolean) };
+}
+
+const docLine = d => `${d.date || '—'} · ${d.title}`
+  + `${d.person ? ` · ${d.person}` : ''} · ${d.category}`;
+
+/**
+ * The whole intake: download from Telegram, work out what it is, put it in
+ * Drive, index it, and say what happened.
+ */
+async function fileIncomingDocument(env, chatId, file, caption, speaker) {
+  if (!env.GOOGLE_REFRESH_TOKEN) {
+    return void say(env, chatId,
+      'Архив документов ещё не подключён к Google Drive — нужен разовый вход '
+      + '(npm run google:auth). Файл я не сохранил.');
+  }
+  const mimeType = file.mime_type || 'application/octet-stream';
+  if (!DOC_MIME[mimeType]) {
+    return void say(env, chatId,
+      `Не умею читать ${mimeType}. Пришли PDF или фото — если это HEIC с айфона, `
+      + 'отправь его как фото, а не файлом, тогда Telegram сам переведёт в JPEG.');
+  }
+  if ((file.file_size || 0) > MAX_DOC_BYTES) {
+    return void say(env, chatId,
+      `Файл ${Math.round(file.file_size / 1048576)} МБ — Telegram не отдаёт ботам больше 20 МБ.`);
+  }
+
+  const info = await (await fetch(`${tgBase(env)}/getFile?file_id=${file.file_id}`)).json();
+  if (!info?.ok || !info.result?.file_path) {
+    throw new Error(`Telegram getFile: ${info?.description ?? 'нет file_path'}`);
+  }
+  const bytes = await (await fetch(
+    `https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${info.result.file_path}`,
+  )).arrayBuffer();
+
+  const today = localParts(env.TZ_NAME || 'Europe/Madrid').date;
+  const [cats, people] = await Promise.all([getDocCategories(env), knownPeople(env)]);
+  const guess = await classifyDocument(env, {
+    bytes, mimeType, fileName: file.file_name, caption, cats, people, today,
+  });
+
+  // The model is told to pick from the list, but a filed document that lands in
+  // an invented category is invisible to every later search — so verify.
+  const category = cats.includes(guess.category) ? guess.category : 'прочее';
+  const person = (guess.person || '').trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(guess.date || '') ? guess.date : today;
+  const title = (guess.title || 'документ').trim().slice(0, 90);
+
+  const root = await driveRoot(env);
+  const catDir = await driveFolder(env, category, root);
+  const dir = person ? await driveFolder(env, person, catDir) : catDir;
+
+  const name = `${date} — ${title}.${DOC_MIME[mimeType]}`.replace(/[/\\]/g, '-');
+  const up = await driveUpload(env, { name, mimeType, parentId: dir, bytes });
+
+  const rec = {
+    id: up.id,
+    category, person, date, title,
+    link: up.webViewLink,
+    fileName: up.name,
+    folderId: dir,
+    mimeType,
+    size: bytes.byteLength,
+    addedAt: new Date().toISOString(),
+    addedBy: speaker || null,
+  };
+  await indexDoc(env, rec);
+  console.log(`doc: filed ${category}/${person || '—'}/${name} (${bytes.byteLength}b)`);
+
+  const where = `${category}${person ? ` / ${person}` : ''}`;
+  await say(env, chatId,
+    `📄 <b>${escapeHtml(title)}</b>\n${escapeHtml(where)} · ${escapeHtml(date)}`
+    + (guess.confident === false ? '\n\n<i>Не уверен, что разобрал верно — поправь, если не то.</i>' : ''),
+    {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      reply_markup: { inline_keyboard: [[{ text: '📂 Открыть в Drive', url: up.webViewLink }]] },
+    });
+}
 
 // ========================================================= calendar marks ===
 /**
@@ -616,7 +1090,7 @@ async function putRules(env, rules) {
   await env.CHATS.put('rules', JSON.stringify(rules));
 }
 
-function systemPrompt(env, tasks, people, hidden, rules, marks) {
+function systemPrompt(env, tasks, people, hidden, rules, marks, cats) {
   const tz = env.TZ_NAME || 'Europe/Madrid';
   const lead = Number(env.ALERT_LEAD_MIN || 5);
   return `You are the household task assistant for a family. You operate on exactly ONE Todoist project — every task you create goes there automatically, and you cannot touch anything outside it.
@@ -640,11 +1114,15 @@ Reminders — raised priority IS the reminder:
 - If a task already exists and someone asks to be reminded about it, raise its priority with update_task and add a time — do not create a duplicate.
 - When you set a reminder, say so and state when the alert will arrive, e.g. «Напомню в 17:55».
 - When the person states a standing preference ("always…", "never…", "с этого момента…", "правило:"), call add_house_rule instead of just agreeing.
+- Documents file themselves: a photo or a file sent to the chat is classified and put in Drive before you ever see the turn, so never offer to do it. When someone asks WHERE a document is — «найди анализы Ксении», «где полис», «скинь прописку» — call find_documents and give the link. If they say something was filed wrongly, find it, then refile_document.
 - School closures — каникулы, «нет школы», teacher days, a public holiday that shuts the school — are whole-day facts, not tasks. Call add_day_marks, never add_task. This is the one place you DO work out calendar dates yourself: pass ISO YYYY-MM-DD and resolve the year from today, remembering a school year crosses New Year. Put every range from one message into one call.
 - Reply in the language the person wrote in, one or two lines, stating only what changed. No preamble.
 
 House rules (set by the family; follow them unless they conflict with the fixed behaviour above):
 ${rules.length ? rules.map((r, i) => `${i + 1}. ${r}`).join('\n') : '(none set)'}
+
+Document archive categories (find_documents accepts only these):
+${cats.length ? cats.join(', ') : '(none)'}
 
 Calendar marks — whole days shaded on the shared calendar, not tasks:
 ${marks.length ? marks.map((m, i) => `${i + 1}. ${markLine(m)}`).join('\n') : '(none set)'}
@@ -659,16 +1137,17 @@ ${hidden > 0 ? `\n(${hidden} further tasks are dated beyond the horizon and not 
 
 // ================================================================ claude ====
 async function converse(env, chatId, userTurn) {
-  const [all, people, history, rules, marks] = await Promise.all([
+  const [all, people, history, rules, marks, cats] = await Promise.all([
     listTasks(env),
     roster(env),
     env.CHATS.get(`hist:${chatId}`, 'json'),
     getRules(env),
     getMarks(env),
+    getDocCategories(env),
   ]);
 
   const visible = relevantTasks(all);
-  const system = systemPrompt(env, visible, people, all.length - visible.length, rules, marks);
+  const system = systemPrompt(env, visible, people, all.length - visible.length, rules, marks, cats);
   const messages = [...(history?.messages ?? []), { role: 'user', content: userTurn }];
 
   for (let hop = 0; hop < 5; hop++) {
@@ -702,7 +1181,7 @@ async function converse(env, chatId, userTurn) {
   return 'Слишком много шагов — остановился.';
 }
 
-async function claude(env, system, messages) {
+async function claude(env, system, messages, overrides = {}) {
   const body = {
     model: env.CLAUDE_MODEL || MODEL,
     max_tokens: MAX_TOKENS,
@@ -713,6 +1192,7 @@ async function claude(env, system, messages) {
     system,
     tools,
     messages,
+    ...overrides,
   };
 
   let last = '';

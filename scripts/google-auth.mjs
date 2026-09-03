@@ -11,6 +11,7 @@
  *   npm run google:auth
  */
 import http from 'node:http';
+import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { spawn } from 'node:child_process';
 
@@ -70,6 +71,34 @@ const flag = name => {
 let clientId = (flag('id') || process.env.GOOGLE_CLIENT_ID || '').trim();
 let clientSecret = (flag('secret') || process.env.GOOGLE_CLIENT_SECRET || '').trim();
 
+// --file takes the JSON the Cloud console hands you when you create the client,
+// so the secret goes from disk to memory without passing through a clipboard,
+// a shell history or a terminal window.
+const clientFile = flag('file') || process.env.GOOGLE_CLIENT_FILE || '';
+if (clientFile && (!clientId || !clientSecret)) {
+  let raw;
+  try {
+    raw = JSON.parse(await readFile(clientFile, 'utf8'));
+  } catch (e) {
+    console.error(`Не читается ${clientFile}: ${e.message}`);
+    process.exit(1);
+  }
+  // Desktop clients come as {"installed": {...}}, web ones as {"web": {...}}.
+  const block = raw.installed || raw.web;
+  if (!block?.client_id || !block?.client_secret) {
+    console.error(`В ${clientFile} нет client_id/client_secret — это точно файл OAuth-клиента?`);
+    process.exit(1);
+  }
+  if (raw.web) {
+    console.error('Внимание: это клиент типа Web application. Нужен Desktop app —'
+      + '\nиначе Google не пустит редирект на localhost. Создай новый клиент.');
+    process.exit(1);
+  }
+  clientId = clientId || block.client_id;
+  clientSecret = clientSecret || block.client_secret;
+  console.log(`Клиент взят из файла: ${clientId}`);
+}
+
 if (!clientId || !clientSecret) {
   if (!process.stdin.isTTY) {
     console.error(SETUP);
@@ -80,9 +109,9 @@ if (!clientId || !clientSecret) {
 
   npm run google:auth
 
-или передай значения без ввода:
+или скорми ему JSON, который скачивается из консоли при создании клиента:
 
-  GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... npm run google:auth
+  npm run google:auth -- --file=~/Downloads/client_secret_....json
 
 Браузер откроется в любом случае — на согласие Google есть 5 минут.`);
     process.exit(1);
@@ -167,7 +196,33 @@ if (!r.ok || !tok.refresh_token) {
   process.exit(1);
 }
 
-console.log(`
+const secrets = {
+  GOOGLE_CLIENT_ID: clientId,
+  GOOGLE_CLIENT_SECRET: clientSecret,
+  GOOGLE_REFRESH_TOKEN: tok.refresh_token,
+};
+
+if (flag('save') !== null || process.argv.includes('--save')) {
+  // Pipe each value into wrangler's stdin. Nothing is printed, so the refresh
+  // token never reaches the screen, the scrollback, or a shell history.
+  for (const [name, value] of Object.entries(secrets)) {
+    process.stdout.write(`secret put ${name} … `);
+    const code = await new Promise(resolve => {
+      const w = spawn('./scripts/wg.sh', ['secret', 'put', name],
+        { stdio: ['pipe', 'ignore', 'inherit'] });
+      w.stdin.end(value);
+      w.on('close', resolve);
+      w.on('error', () => resolve(-1));
+    });
+    if (code !== 0) {
+      console.error(`\nНе получилось (код ${code}). Положи вручную: npm run secret put ${name}`);
+      process.exit(1);
+    }
+    console.log('ок');
+  }
+  console.log('\nВсе три секрета в воркере. Дальше: npm run deploy');
+} else {
+  console.log(`
 Готово. Положи три секрета в воркер — по одному, значение вводится в ответ на запрос:
 
   npm run secret put GOOGLE_CLIENT_ID
@@ -180,4 +235,7 @@ console.log(`
   ${tok.refresh_token}
 
 Потом: npm run deploy
+
+(В следующий раз добавь --save — скрипт положит их сам, ничего не печатая.)
 `);
+}

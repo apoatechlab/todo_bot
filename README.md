@@ -729,18 +729,26 @@ The script walks through creating the OAuth client, opens the consent screen,
 catches the redirect and prints the three secrets to feed to
 `npm run secret put`.
 
-**Run it from a real terminal.** It asks for the client id and secret on stdin,
-so a wrapper that does not attach a TTY leaves it waiting forever — Node reports
-that as `Detected unsettled top-level await`, which explains nothing. The script
-now says so plainly instead, and takes the same values without a prompt:
+Feed it the JSON the console downloads when the client is created, and let it
+write the secrets itself:
 
 ```
-GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... npm run google:auth
-npm run google:auth -- --id=... --secret=...
+npm run google:auth -- --file=~/Downloads/client_secret_….json --save
 ```
 
-The browser half works either way; there is a five-minute window to grant
-consent before it gives up.
+`--file` reads Google's own artifact, so the client secret goes from disk to
+memory without a clipboard or a shell history in between. `--save` pipes all
+three values into `wrangler secret put` — with both, **nothing sensitive is ever
+printed**, which matters because the refresh token is a standing key to the
+Drive. Without `--save` the script prints them for you to paste, which is fine
+in a terminal you trust and not fine anywhere the output is recorded.
+
+**Run it from a real terminal.** The prompt fallback reads stdin, so a wrapper
+that attaches no TTY leaves it waiting forever — Node reports that as
+`Detected unsettled top-level await`, which explains nothing. The script now
+says so plainly, and `--file` / `--id=` / `--secret=` / the matching env vars
+all skip the prompt. The browser half works either way; there is a five-minute
+window to grant consent before it gives up.
 
 Creating the OAuth client, in the console as it stands in 2026 — what used to
 be *APIs & Services → OAuth consent screen* is now **Google Auth Platform**, and

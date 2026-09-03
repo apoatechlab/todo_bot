@@ -873,7 +873,43 @@ as *messages about documents are not my business* — it answered a correction
 with "такие сообщения не для меня". The rule now says the opposite in as many
 words, with the phrasings people actually use as examples.
 
-### 11.7 Correcting a mistake
+### 11.7 Asking what is *inside* a document
+
+`find_documents` returns titles and links; it cannot see inside, because the
+index stores only category, person, date and title — the contents were never
+kept. `read_documents` opens the files:
+
+```
+«какой был HDL у Антона»
+«все замеры холестерина за год»
+«когда истекает страховка»
+```
+
+It searches the index, pulls up to **6** matching files back out of Drive
+(≤ 12 MB total, which keeps the base64 clear of the 32 MB request cap and the
+Worker's 50-subrequest budget), attaches them oldest-first so a value over time
+reads as a series, and asks Claude the question. Files too big for the remaining
+budget are skipped rather than truncated, and a download that 404s costs one
+document, not the answer.
+
+**Every number comes back tagged with the document it came from** — «HDL 1.42
+(документ 2)» — and the tool returns the matching links so the reply can carry
+them. Extraction from a scanned lab table is not perfect, and a medical value
+nobody can trace back to a page is worse than no value. The reading prompt also
+keeps it to what is printed, reference ranges and the lab's own out-of-range
+marks included, without diagnosing on top.
+
+**Why read on demand instead of extracting at intake.** Pulling the measurements
+into a structured table when the document arrives would make «все замеры HDL» an
+index lookup — instant, cheap, and able to chart a trend. It would also need a
+canonical name per analyte (HDL / HDL-C / Colesterol HDL / ЛПВП are one thing,
+spelled four ways across two countries' labs), and it would only cover documents
+filed after it shipped. Reading on demand works on everything already in the
+archive and needs no such vocabulary; the cost is that each question re-reads the
+files. If the same handful of values get asked about repeatedly, extraction earns
+its keep — as a layer on top, not a replacement.
+
+### 11.8 Correcting a mistake
 
 Misclassification is a matter of when, not if, so it is fixable by saying so:
 «это не анализы, а страховка», «это Ксении, не Майи». That is `refile_document`
@@ -882,7 +918,7 @@ working.
 
 `/docs` prints the archive: how many documents, in which categories.
 
-### 11.8 Who sees what
+### 11.9 Who sees what
 
 These are TIE cards, empadronamiento and medical results. Worth being explicit:
 Drive links are **not** public — they resolve only for people the folder is

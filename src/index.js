@@ -421,6 +421,21 @@ const tools = [
     },
   },
   {
+    name: 'read_documents',
+    description: 'Open archived documents and answer a question about what is INSIDE them — lab values, policy numbers, expiry dates, dosages, names printed on a card. Use this whenever the question is about what a document SAYS rather than where it is: «какой был HDL у Антона», «все замеры холестерина за год», «когда истекает страховка», «какой номер полиса». find_documents only returns titles and links and cannot see inside. Pass on every document number and link it returns — a value the family cannot trace back to a document is useless.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'What to look for, in Russian, as specifically as the person asked — the exact analyte, field or number. Not «расскажи про анализы».' },
+        person: { type: 'string', description: 'Whose documents, e.g. «Антон».' },
+        category: { type: 'string', description: 'Narrow to one archive category — «анализы» for lab work. Do this whenever you can: it keeps unrelated documents out.' },
+        query: { type: 'string', description: 'Distinctive words that must appear in the document TITLE. Leave empty when unsure — titles rarely mention individual measurements, and every word has to match.' },
+        limit: { type: 'integer', description: 'How many documents to open, newest first. Default 5, max 6 — each one costs time.' },
+      },
+      required: ['question'],
+    },
+  },
+  {
     name: 'refile_document',
     description: 'Fix a document that was filed wrongly — move it to another category or person, correct its date or title. Use after «это не анализы, а страховка» or «это Ксении». Call find_documents first to get the id.',
     input_schema: {
@@ -555,6 +570,20 @@ async function runTool(env, name, args) {
           category: d.category, link: d.link,
         })),
       };
+    }
+    case 'read_documents': {
+      const cats = await getDocCategories(env);
+      const category = args.category && cats.includes(args.category) ? args.category : undefined;
+      const { total, docs } = await searchDocs(env, {
+        person: args.person, category, query: args.query,
+        limit: Math.min(Math.max(args.limit || 5, 1), MAX_READ_DOCS),
+      });
+      if (!docs.length) {
+        return { found: 0, note: 'Под запрос ничего не нашлось — открывать нечего.',
+          categories: cats,
+          hint: 'query ищет по заголовку, а не по содержимому. Убери его и повтори.' };
+      }
+      return readDocuments(env, docs, args.question, total);
     }
     case 'refile_document': {
       const rec = await env.CHATS.get(`doc:${args.document_id}`, 'json');
@@ -908,6 +937,83 @@ ${people.length ? people.map(p => `- ${p}`).join('\n') : '(пока никого
   return call.input;
 }
 
+// How many documents one question may open, and how many bytes of them may go
+// into a single Anthropic request. The Worker gets 50 subrequests per
+// invocation and a conversation has already spent some; the byte budget keeps
+// the base64 well under the 32 MB request cap and out of the Worker's memory
+// ceiling.
+const MAX_READ_DOCS = 6;
+const MAX_READ_BYTES = 12 * 1024 * 1024;
+
+/**
+ * Answer a question from what is *inside* archived documents.
+ *
+ * The index holds only category, person, date and title — the contents were
+ * never stored — so a question about a lab value or an expiry date has to open
+ * the files. They come back from Drive, go to Claude as attachments, and the
+ * answer carries document numbers that the caller turns back into links.
+ *
+ * Reading on demand rather than extracting at intake is a deliberate first cut:
+ * it works on everything already filed, and it does not need a schema of
+ * analyte names kept canonical across two languages and every lab's spelling.
+ * The cost is that each question re-reads the files.
+ */
+async function readDocuments(env, docs, question, matched) {
+  const token = await driveToken(env);
+  const skipped = [];
+  const read = [];
+  const content = [];
+  let budget = MAX_READ_BYTES;
+
+  // Oldest first: a question about a value over time should read as a series.
+  const ordered = docs.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+  for (const d of ordered) {
+    if (!DOC_MIME[d.mimeType]) { skipped.push({ ...d, why: 'нечитаемый формат' }); continue; }
+    if ((d.size || 0) > budget) { skipped.push({ ...d, why: 'не поместился' }); continue; }
+
+    const r = await fetch(`${DRIVE_API}/files/${d.id}?alt=media`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) { skipped.push({ ...d, why: `Drive ${r.status}` }); continue; }
+
+    const bytes = await r.arrayBuffer();
+    budget -= bytes.byteLength;
+    const n = read.length + 1;
+    content.push({ type: 'text', text: `Документ ${n}: ${d.date} · ${d.title}`
+      + (d.person ? ` · ${d.person}` : '') + ` · ${d.category}` });
+    content.push(DOC_MIME[d.mimeType] === 'pdf'
+      ? { type: 'document', source: { type: 'base64', media_type: d.mimeType, data: toBase64(bytes) } }
+      : { type: 'image', source: { type: 'base64', media_type: d.mimeType, data: toBase64(bytes) } });
+    read.push({ n, id: d.id, title: d.title, date: d.date, person: d.person || null, link: d.link });
+  }
+
+  if (!read.length) {
+    return { answer: null, error: 'Ни один документ не удалось открыть.', skipped };
+  }
+
+  content.push({ type: 'text', text: `Вопрос: ${question}` });
+
+  const res = await claude(env, `Ты читаешь документы семьи и отвечаешь строго по тому, что в них напечатано.
+
+- Отвечай только тем, что действительно видишь. Не нашёл — так и скажи прямо, не додумывай.
+- К КАЖДОМУ числу добавляй номер документа, откуда оно: «HDL 1.42 ммоль/л (документ 2)». Число без источника бесполезно — его нельзя перепроверить.
+- Если показатель есть в нескольких документах, перечисли все значения с датами по возрастанию, чтобы была видна динамика.
+- Приводи единицы измерения и референсный интервал, если они напечатаны.
+- Ты не ставишь диагнозов и не даёшь медицинских рекомендаций — только то, что написано в документе, включая пометки самой лаборатории о выходе за норму.
+- Коротко. Без вступлений.`,
+    [{ role: 'user', content }],
+    { tools: undefined, tool_choice: undefined, max_tokens: 4000 });
+
+  const answer = (res.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+  return {
+    answer: answer || 'Не удалось ничего прочитать.',
+    read,
+    matched,
+    ...(skipped.length ? { skipped: skipped.map(d => `${d.date} · ${d.title} — ${d.why}`) } : {}),
+  };
+}
+
 /** Index entry. Metadata rides on the KV key so search never reads values. */
 async function indexDoc(env, rec) {
   await env.CHATS.put(`doc:${rec.id}`, JSON.stringify(rec), {
@@ -1149,7 +1255,9 @@ Reminders — raised priority IS the reminder:
 - When you set a reminder, say so and state when the alert will arrive, e.g. «Напомню в 17:55».
 - When the person states a standing preference ("always…", "never…", "с этого момента…", "правило:"), call add_house_rule instead of just agreeing.
 - Documents file themselves: a photo or a file is classified and put in Drive before you ever see the turn, so never offer to file one. That does NOT mean messages about documents are none of your business — the opposite. Anything said about the document that was just filed is addressed to you: «это анализ Антона», «это Ксении», «это не анализы, а страховка», «это от 5 мая», or a bare name in reply to your question about whose it is. Call refile_document with the id shown under "Последний документ" below. Never answer that such messages are not for you.
-- When someone asks WHERE a document is — «найди анализы Ксении», «где полис», «скинь прописку» — call find_documents and give the link. To fix an older one, find it first, then refile_document.
+- Two different tools for documents, and picking the wrong one wastes the turn. WHERE something is → find_documents, which returns titles and links only. WHAT IS WRITTEN in it → read_documents, which actually opens the files: «какой был HDL у Антона», «все замеры холестерина», «когда истекает страховка», «какая доза». If the question names a value, a number or a date printed inside a document, it is read_documents.
+- read_documents answers with «(документ 2)» markers. Replace each one with a link to that document from the "read" list it returned — a number the family cannot trace back to its source is worse than no number. Never state a medical value without its link, and never add an interpretation of your own on top of what the document says.
+- To fix a document filed wrongly, find_documents first, then refile_document.
 - School closures — каникулы, «нет школы», teacher days, a public holiday that shuts the school — are whole-day facts, not tasks. Call add_day_marks, never add_task. This is the one place you DO work out calendar dates yourself: pass ISO YYYY-MM-DD and resolve the year from today, remembering a school year crosses New Year. Put every range from one message into one call.
 - Reply in the language the person wrote in, one or two lines, stating only what changed. No preamble.
 

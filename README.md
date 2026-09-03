@@ -750,16 +750,26 @@ it opens on a "not configured yet / Get started" wizard:
 |---|---|
 | [Create a project](https://console.cloud.google.com/projectcreate) | |
 | [Enable the Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com) | |
-| [Auth Platform → Get started](https://console.cloud.google.com/auth/overview) | app name, support email, **Audience: External**, contact email, accept the policy |
-| [Audience → Publish app](https://console.cloud.google.com/auth/audience) | moves it out of *Testing* |
+| [Auth Platform → Get started](https://console.cloud.google.com/auth/overview) | app name, support email, contact email, accept the policy |
+| [Audience](https://console.cloud.google.com/auth/audience) | **Internal** on Workspace; otherwise External, then *Publish app* |
 | [Clients → Create client](https://console.cloud.google.com/auth/clients) | **Application type: Desktop app** → gives the id and secret |
 
 Two things worth repeating:
 
-- **Publish the app** ("In production"). While it is in *Testing*, Google
-  expires the refresh token after **7 days** and the archive quietly stops
-  working. Verification is *not* required to publish here — `drive.file` is a
-  non-sensitive scope, so there is no review and no "unverified app" wall.
+- **The refresh token must not expire.** Google gives one a **7-day** life on an
+  app that is *External* **and** in *Testing*, after which the archive quietly
+  stops working. Two ways out, and which one you get is decided by the account
+  that authorises:
+  - **Google Workspace** (mail on your own domain) — set Audience to
+    **Internal**. Nothing to publish, no Branding to fill in, no expiry. Only
+    accounts in that Workspace can authorise, which is fine: exactly one
+    account ever does. Sharing the Drive folder with relatives on gmail.com is
+    unaffected — that is a Drive permission, not an OAuth one.
+  - **Plain Gmail** — External, then *Publish app*. That button refuses while
+    the **Branding** page is incomplete: it wants an application home page and
+    a privacy policy URL on a domain verified in Search Console. Verification
+    review is still *not* required — `drive.file` is a non-sensitive scope, so
+    there is no queue and no "unverified app" wall — but those two links are.
 - The scope is **`drive.file`** — access to files this app itself created, and
   nothing else in the Drive. That is why the bot makes its own root folder
   (`DRIVE_ROOT_NAME`) rather than being pointed at an existing one. Share that

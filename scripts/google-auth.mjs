@@ -30,13 +30,23 @@ const SETUP = `
 
   3. Настрой Google Auth Platform (бывший "OAuth consent screen"):
      https://console.cloud.google.com/auth/overview
-     Кнопка "Get started" → App name, свой email → Audience: External
-     → контактный email → согласиться с политикой → Create.
+     "Get started" → App name, свой email → Audience → контактный email
+     → согласиться с политикой → Create.
 
-  4. Опубликуй приложение — иначе refresh-токен умрёт через 7 дней:
-     https://console.cloud.google.com/auth/audience
-     Publish app → Confirm. Статус должен стать "In production".
-     Проверку Google проходить НЕ нужно: scope drive.file несенситивный.
+  4. Audience: https://console.cloud.google.com/auth/audience
+
+     Есть Google Workspace (почта на своём домене)? Ставь INTERNAL.
+     Ничего больше заполнять и публиковать не нужно, и refresh-токен
+     живёт вечно. Это самый короткий путь.
+
+     Нет Workspace (обычный gmail)? Тогда External, и придётся:
+       - на странице Branding заполнить home page и privacy policy
+         на домене, который ты подтвердил в Search Console
+         (без этого кнопка Publish app ругается на incomplete config);
+       - нажать Publish app → статус "In production".
+     Иначе refresh-токен умрёт через 7 дней: это ограничение
+     связки External + Testing. Верификацию проходить не надо —
+     scope drive.file несенситивный.
 
   5. Создай клиент:
      https://console.cloud.google.com/auth/clients

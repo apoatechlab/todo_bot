@@ -196,9 +196,11 @@ async function handleUpdate(update, env) {
 
   await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
   try {
-    const reply = await converse(env, chatId, userTurn);
-    await say(env, chatId, (voice ? `🎤 _${text}_\n\n` : '') + reply,
-      { reply_to_message_id: isGroup ? msg.message_id : undefined });
+    const { reply, touched } = await converse(env, chatId, userTurn);
+    await say(env, chatId, (voice ? `🎤 _${text}_\n\n` : '') + reply, {
+      reply_to_message_id: isGroup ? msg.message_id : undefined,
+      ...taskButtons(touched),
+    });
   } catch (e) {
     console.error(e.stack);
     await say(env, chatId, `⚠️ ${e.message}`.slice(0, 500));
@@ -626,6 +628,22 @@ async function runTool(env, name, args) {
     default:
       return { error: `unknown tool ${name}` };
   }
+}
+
+/**
+ * One button per task created or changed this turn, so «купить молоко завтра»
+ * comes back with a way straight to it.
+ *
+ * Capped at three: a turn that adds a shopping list of eight would otherwise
+ * bury the reply under a keyboard taller than the message.
+ */
+function taskButtons(touched) {
+  if (!touched?.size) return {};
+  const rows = [...touched].slice(0, 3).map(([id, title]) => [{
+    text: `📋 ${title.length > 28 ? title.slice(0, 27) + '…' : title}`,
+    url: `${TD_APP}/task/${id}`,
+  }]);
+  return { reply_markup: { inline_keyboard: rows } };
 }
 
 function compact(t) {
@@ -1260,6 +1278,7 @@ Reminders — raised priority IS the reminder:
 - To fix a document filed wrongly, find_documents first, then refile_document.
 - School closures — каникулы, «нет школы», teacher days, a public holiday that shuts the school — are whole-day facts, not tasks. Call add_day_marks, never add_task. This is the one place you DO work out calendar dates yourself: pass ISO YYYY-MM-DD and resolve the year from today, remembering a school year crosses New Year. Put every range from one message into one call.
 - Reply in the language the person wrote in, one or two lines, stating only what changed. No preamble.
+- Never paste a Todoist link into your text. Every task you add or change already gets a button under the reply — a link written out as well is noise, and task titles break Markdown.
 
 House rules (set by the family; follow them unless they conflict with the fixed behaviour above):
 ${rules.length ? rules.map((r, i) => `${i + 1}. ${r}`).join('\n') : '(none set)'}
@@ -1300,11 +1319,15 @@ async function converse(env, chatId, userTurn) {
     lastDocId ? await env.CHATS.get(`doc:${lastDocId}`, 'json') : null);
   const messages = [...(history?.messages ?? []), { role: 'user', content: userTurn }];
 
+  // Tasks created or changed this turn, id -> title. A Map so the same task
+  // touched twice ("добавь" then "и поставь срок") yields one button.
+  const touched = new Map();
+
   for (let hop = 0; hop < 5; hop++) {
     const res = await claude(env, system, messages);
 
     if (res.stop_reason === 'refusal') {
-      return 'Не могу это выполнить.';
+      return { reply: 'Не могу это выполнить.', touched };
     }
 
     // Echo the assistant turn back verbatim — thinking blocks included. They
@@ -1314,7 +1337,7 @@ async function converse(env, chatId, userTurn) {
     if (res.stop_reason !== 'tool_use') {
       const reply = res.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
       await saveHistory(env, chatId, messages);
-      return reply || 'Готово.';
+      return { reply: reply || 'Готово.', touched };
     }
 
     const results = [];
@@ -1323,12 +1346,18 @@ async function converse(env, chatId, userTurn) {
       try { out = await runTool(env, block.name, block.input); }
       catch (e) { out = { error: String(e.message).slice(0, 300) }; }
       console.log('tool', block.name, JSON.stringify(block.input));
+      // A button beats a link in the text: task titles routinely contain _ * [ ],
+      // which breaks Markdown, and say() then falls back to plain text and shows
+      // the raw brackets. A keyboard has nothing to escape.
+      if (out?.ok && out.task?.id && (block.name === 'add_task' || block.name === 'update_task')) {
+        touched.set(String(out.task.id), out.task.content);
+      }
       results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(out) });
     }
     // All results for one assistant turn go back in a SINGLE user message.
     messages.push({ role: 'user', content: results });
   }
-  return 'Слишком много шагов — остановился.';
+  return { reply: 'Слишком много шагов — остановился.', touched };
 }
 
 async function claude(env, system, messages, overrides = {}) {

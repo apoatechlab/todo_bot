@@ -292,6 +292,13 @@ Editing, by voice or text:
 - `/school` — list the shaded calendar days; `/school reset` clears them (§10)
 - `/docs` — what is in the document archive (§11)
 
+Every task the bot adds or changes comes back with a **📋 button straight to it
+in Todoist** — up to three per reply, so a turn that adds eight groceries does
+not bury the message under a keyboard. A button rather than a link in the text
+on purpose: task titles routinely contain `_ * [ ]`, which breaks Markdown, and
+`say()` then falls back to plain text and shows the raw brackets. A keyboard has
+nothing to escape.
+
 Cap: 25 rules. House rules are persuasion, not enforcement — if the bot starts
 behaving oddly, `/rules` is the first place to look.
 

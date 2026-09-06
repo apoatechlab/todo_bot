@@ -10,7 +10,11 @@ TODOIST_PROJECT_ID = "REPLACE_ME"          # last path segment of the project UR
 TZ_NAME            = "Europe/Madrid"
 TODOIST_DUE_LANG   = "ru"
 ALLOWED_CHAT_IDS   = "REPLACE_ME"          # comma-separated Telegram chat ids
-ALLOW_DELETE       = "false"               # "true" enables real deletes
+ALLOW_DELETE       = "false"               # deletes are mapped to complete
+# "true" deletes the person's message once it has produced a task, so the chat
+# keeps the bot's confirmation and not the stream of «купи молоко». Requires
+# can_delete_messages in a group. Questions and chit-chat are never deleted.
+DELETE_REQUESTS    = "false"
 CLAUDE_MODEL       = "claude-sonnet-5"
 CLAUDE_EFFORT      = "low"                 # low | medium | high | xhigh | max
 

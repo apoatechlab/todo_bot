@@ -71,6 +71,7 @@ fork should change the project, chat and timezone (see §3.3).
 | `DIGEST_AT` | `07:30` | morning digest, local time — see §7 |
 | `ALLOWED_CHAT_IDS` | `REPLACE_ME` | comma-separated Telegram chat ids |
 | `ALLOW_DELETE` | `false` | deletes are mapped to complete |
+| `DELETE_REQUESTS` | `false` | `true` removes a message once it has produced a task |
 | `BOT_USERNAME` | `REPLACE_ME` | for the Mini App link — see §9 |
 | `MINIAPP_SHORT_NAME` | `REPLACE_ME` | BotFather app short name — see §9 |
 | `DRIVE_ROOT_NAME` | `Документы семьи` | Drive folder the archive lives in — see §11 |
@@ -291,6 +292,19 @@ Editing, by voice or text:
 - `/digest` — post the morning digest into this chat right now (§7)
 - `/school` — list the shaded calendar days; `/school reset` clears them (§10)
 - `/docs` — what is in the document archive (§11)
+
+With `DELETE_REQUESTS = "true"`, the message that produced a task is **removed
+once the task exists** — the chat keeps the bot's confirmation instead of a
+stream of «купи молоко». Only when something was actually written: a question
+like «что на сегодня?» is part of the conversation and stays, and so does a
+completion, whose request is the only record that it happened. The reply drops
+its quote exactly when the message is going to disappear, or it would point at
+nothing. Needs `can_delete_messages` in a group; without it the delete is logged
+and ignored, because the task was still created and that is what mattered.
+
+Documents are never deleted this way. The chat copy of a scan is a real copy,
+and removing it on the strength of an upload having succeeded is a different
+kind of act from tidying away «купи молоко».
 
 Every task the bot adds or changes comes back with a **📋 button straight to it
 in Todoist** — up to three per reply, so a turn that adds eight groceries does

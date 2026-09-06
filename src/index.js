@@ -11,7 +11,8 @@
  *            ALLOW_DELETE, CLAUDE_MODEL, CLAUDE_EFFORT,
  *            DIGEST_CHAT_ID, DIGEST_AT, DIGEST_SKIP_EMPTY, SUGGEST_COUNT,
  *            ALERT_LEAD_MIN, ALERT_MIN_PRIORITY, ALERT_CHAT_ID,
- *            BOT_USERNAME, MINIAPP_SHORT_NAME, DRIVE_ROOT_NAME, DRIVE_ROOT_ID
+ *            BOT_USERNAME, MINIAPP_SHORT_NAME, DRIVE_ROOT_NAME, DRIVE_ROOT_ID,
+ *            DELETE_REQUESTS
  */
 
 import APP_HTML from './app.html';
@@ -197,10 +198,25 @@ async function handleUpdate(update, env) {
   await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
   try {
     const { reply, touched } = await converse(env, chatId, userTurn);
+
+    // «купи молоко» has served its purpose once the task exists; the reply says
+    // what changed and links to it. Only when something was actually written,
+    // though — a question like «что на сегодня?» is part of the conversation.
+    const drop = env.DELETE_REQUESTS === 'true' && touched.size > 0;
+
     await say(env, chatId, (voice ? `🎤 _${text}_\n\n` : '') + reply, {
-      reply_to_message_id: isGroup ? msg.message_id : undefined,
+      // Quoting a message that is about to disappear leaves a reply pointing at
+      // nothing, so skip the quote exactly when we are going to delete.
+      reply_to_message_id: isGroup && !drop ? msg.message_id : undefined,
       ...taskButtons(touched),
     });
+
+    if (drop) {
+      // Needs can_delete_messages in a group. Nothing here is worth interrupting
+      // the person over if it is missing — the task was still created.
+      const del = await tg(env, 'deleteMessage', { chat_id: chatId, message_id: msg.message_id });
+      if (!del?.ok) console.warn('deleteMessage:', del?.description);
+    }
   } catch (e) {
     console.error(e.stack);
     await say(env, chatId, `⚠️ ${e.message}`.slice(0, 500));

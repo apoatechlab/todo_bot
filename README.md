@@ -28,6 +28,7 @@ sees it, so any capability added as a tool works in both channels automatically.
 
 ```
 src/index.js            the Worker — everything lives here
+test/                   `npm test` — stubbed upstreams, no network, no keys
 src/app.html            the Mini App page, bundled in as a string (§9)
 wrangler.toml           non-secret config; project id and timezone are filled in
 scripts/wg.sh           wrangler wrapper — prefers wrangler.local.toml
@@ -834,8 +835,8 @@ reply; nothing else in the bot is affected.
 | Step | |
 |---|---|
 | Intake | `msg.document`, or the largest rendition of `msg.photo`. Telegram re-encodes photos to JPEG, so they carry no `mime_type` of their own |
-| Guards | PDF/JPEG/PNG/WebP/GIF only, and ≤ 20 MB — the hard ceiling on what Telegram lets a bot download. HEIC gets told to resend as a photo rather than a file |
-| Classify | One dedicated Claude call: the bytes as a `document` or `image` block, a forced `file_document` tool call for the schema |
+| Guards | ≤ 20 MB, the hard ceiling on what Telegram lets a bot download. No format is refused |
+| Classify | One dedicated Claude call, forced into the `file_document` schema. PDFs and images go as attachments; text and CSV are pasted in; **anything else is labelled from its file name and caption**, and the card says so |
 | File | Find-or-create the folders, resumable upload, keep the `webViewLink` |
 | Index | `doc:<driveId>` in KV |
 
@@ -847,6 +848,18 @@ forced there is nothing left to reason about.
 
 Uploads are resumable (two requests: session, then bytes). Multipart would be
 one request but caps at 5 MB, and Telegram hands over up to 20.
+
+**Formats.** Claude can be shown PDFs and images, and that is all — an `.xlsx`
+from school or a `.doc` contract cannot be opened. Refusing them would lose the
+document to save the labelling, so everything is stored either way: the office
+file goes to Drive with its own extension, the label comes from the file name
+and caption, and the reply says «внутрь xlsx заглянуть не могу» so a wrong
+category does not look like a misreading. `read_documents` skips them for the
+same reason, naming the format rather than failing quietly.
+
+The extension comes from the **file name** first and the MIME type only as a
+fallback: Telegram reports whatever the sending client claimed, and an `.xlsx`
+arriving as `application/octet-stream` is routine.
 
 ### 11.4 Categories are a list; people are not
 

@@ -622,7 +622,7 @@ async function runTool(env, name, args) {
       const root = await driveRoot(env);
       const catDir = await driveFolder(env, next.category, root);
       const dir = next.person ? await driveFolder(env, next.person, catDir) : catDir;
-      const name = `${next.date} — ${next.title}.${DOC_MIME[rec.mimeType] || 'bin'}`
+      const name = `${next.date} — ${next.title}.${rec.ext || extFor(rec.fileName, rec.mimeType)}`
         .replace(/[/\\]/g, '-');
       const moved = await driveMove(env, rec.id, { name, parentId: dir, oldParentId: rec.folderId });
 
@@ -872,13 +872,50 @@ const MAX_DOC_BYTES = 20 * 1024 * 1024;
 // the file still gets filed — just classified from its name and caption alone.
 const MAX_VISION_BYTES = 14 * 1024 * 1024;
 
-const DOC_MIME = {
+/**
+ * What Claude can actually be shown. Everything else is still stored — a family
+ * archive that refuses the school's xlsx is not an archive — but it gets filed
+ * from its name and caption rather than its contents.
+ */
+const VIEWABLE_MIME = {
   'application/pdf': 'pdf',
   'image/jpeg': 'jpg',
   'image/png': 'png',
   'image/webp': 'webp',
   'image/gif': 'gif',
 };
+
+/** Small enough to paste into the prompt verbatim instead of attaching. */
+const TEXT_MIME = new Set(['text/plain', 'text/csv', 'text/markdown', 'application/json']);
+const MAX_INLINE_TEXT = 100_000;
+
+/** Fallback extension when the file name has none of its own. */
+const EXT_BY_MIME = {
+  ...VIEWABLE_MIME,
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'application/vnd.oasis.opendocument.text': 'odt',
+  'application/vnd.oasis.opendocument.spreadsheet': 'ods',
+  'application/rtf': 'rtf',
+  'text/plain': 'txt',
+  'text/csv': 'csv',
+  'application/zip': 'zip',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+};
+
+/**
+ * Trust the file's own extension first: Telegram reports whatever the sending
+ * client claimed, and an .xlsx arriving as application/octet-stream is common.
+ */
+function extFor(fileName, mimeType) {
+  const fromName = /\.([A-Za-z0-9]{1,8})$/.exec(fileName || '')?.[1];
+  return (fromName || EXT_BY_MIME[mimeType] || 'bin').toLowerCase();
+}
 
 async function getDocCategories(env) {
   const stored = await env.CHATS.get('doccats', 'json');
@@ -932,18 +969,32 @@ const FILE_DOC_TOOL = {
  */
 async function classifyDocument(env, { bytes, mimeType, fileName, caption, cats, people, today }) {
   const content = [];
-  if (bytes && bytes.byteLength <= MAX_VISION_BYTES && DOC_MIME[mimeType]) {
-    content.push(mimeType === 'application/pdf'
-      ? { type: 'document', source: { type: 'base64', media_type: mimeType, data: toBase64(bytes) } }
-      : { type: 'image', source: { type: 'base64', media_type: mimeType, data: toBase64(bytes) } });
+  let blind = '';
+
+  if (!bytes) {
+    blind = '';
+  } else if (VIEWABLE_MIME[mimeType]) {
+    if (bytes.byteLength <= MAX_VISION_BYTES) {
+      content.push(mimeType === 'application/pdf'
+        ? { type: 'document', source: { type: 'base64', media_type: mimeType, data: toBase64(bytes) } }
+        : { type: 'image', source: { type: 'base64', media_type: mimeType, data: toBase64(bytes) } });
+    } else {
+      blind = 'Файл слишком большой, чтобы его показать — суди по имени и подписи.';
+    }
+  } else if (TEXT_MIME.has(mimeType) && bytes.byteLength <= MAX_INLINE_TEXT) {
+    // Plain text needs no attachment machinery; paste it and it is readable.
+    content.push({ type: 'text', text: `Содержимое файла:\n${new TextDecoder().decode(bytes)}` });
+  } else {
+    blind = `Формат ${mimeType} я открыть не могу — суди по имени файла и подписи.`;
   }
+
   content.push({
     type: 'text',
     text: [
       'Определи, что это за документ, и вызови file_document.',
       fileName ? `Имя файла: ${fileName}` : '',
       caption ? `Подпись от человека (она важнее того, что ты видишь в файле): ${caption}` : '',
-      content.length === 1 ? 'Сам файл слишком большой, чтобы его показать — суди по имени и подписи.' : '',
+      blind,
     ].filter(Boolean).join('\n'),
   });
 
@@ -1003,7 +1054,10 @@ async function readDocuments(env, docs, question, matched) {
   const ordered = docs.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
   for (const d of ordered) {
-    if (!DOC_MIME[d.mimeType]) { skipped.push({ ...d, why: 'нечитаемый формат' }); continue; }
+    if (!VIEWABLE_MIME[d.mimeType]) {
+      skipped.push({ ...d, why: `${d.ext || 'формат'} нельзя открыть` });
+      continue;
+    }
     if ((d.size || 0) > budget) { skipped.push({ ...d, why: 'не поместился' }); continue; }
 
     const r = await fetch(`${DRIVE_API}/files/${d.id}?alt=media`, {
@@ -1016,7 +1070,7 @@ async function readDocuments(env, docs, question, matched) {
     const n = read.length + 1;
     content.push({ type: 'text', text: `Документ ${n}: ${d.date} · ${d.title}`
       + (d.person ? ` · ${d.person}` : '') + ` · ${d.category}` });
-    content.push(DOC_MIME[d.mimeType] === 'pdf'
+    content.push(VIEWABLE_MIME[d.mimeType] === 'pdf'
       ? { type: 'document', source: { type: 'base64', media_type: d.mimeType, data: toBase64(bytes) } }
       : { type: 'image', source: { type: 'base64', media_type: d.mimeType, data: toBase64(bytes) } });
     read.push({ n, id: d.id, title: d.title, date: d.date, person: d.person || null, link: d.link });
@@ -1103,11 +1157,9 @@ async function fileIncomingDocument(env, chatId, file, caption, speaker) {
       + '(npm run google:auth). Файл я не сохранил.');
   }
   const mimeType = file.mime_type || 'application/octet-stream';
-  if (!DOC_MIME[mimeType]) {
-    return void say(env, chatId,
-      `Не умею читать ${mimeType}. Пришли PDF или фото — если это HEIC с айфона, `
-      + 'отправь его как фото, а не файлом, тогда Telegram сам переведёт в JPEG.');
-  }
+  // No format is turned away any more. Refusing an .xlsx the school sent, on the
+  // grounds that Claude cannot read it, loses the document to save the labelling
+  // — so it gets stored either way and labelled from its name and caption.
   if ((file.file_size || 0) > MAX_DOC_BYTES) {
     return void say(env, chatId,
       `Файл ${Math.round(file.file_size / 1048576)} МБ — Telegram не отдаёт ботам больше 20 МБ.`);
@@ -1138,7 +1190,8 @@ async function fileIncomingDocument(env, chatId, file, caption, speaker) {
   const catDir = await driveFolder(env, category, root);
   const dir = person ? await driveFolder(env, person, catDir) : catDir;
 
-  const name = `${date} — ${title}.${DOC_MIME[mimeType]}`.replace(/[/\\]/g, '-');
+  const ext = extFor(file.file_name, mimeType);
+  const name = `${date} — ${title}.${ext}`.replace(/[/\\]/g, '-');
   const up = await driveUpload(env, { name, mimeType, parentId: dir, bytes });
 
   const rec = {
@@ -1148,6 +1201,7 @@ async function fileIncomingDocument(env, chatId, file, caption, speaker) {
     fileName: up.name,
     folderId: dir,
     mimeType,
+    ext,
     size: bytes.byteLength,
     addedAt: new Date().toISOString(),
     addedBy: speaker || null,
@@ -1163,6 +1217,13 @@ async function fileIncomingDocument(env, chatId, file, caption, speaker) {
   const where = `${category}${person ? ` / ${person}` : ''}`;
   // File first, ask second. A document nobody claimed is still safer in Drive
   // than held hostage to a question that may never get answered.
+  // Say when the label came from the name alone — otherwise a wrong category on
+  // an .xlsx looks like the bot read it and got it wrong.
+  const unread = !VIEWABLE_MIME[mimeType] && !TEXT_MIME.has(mimeType)
+    ? `\n\n<i>Внутрь ${escapeHtml(ext)} заглянуть не могу — разложил по имени файла`
+      + `${caption ? ' и подписи' : ''}. Поправь, если не туда.</i>`
+    : '';
+
   const ask = !person
     ? '\n\n<i>Чей это документ? Ответь именем — переложу в его папку.</i>'
     : guess.confident === false
@@ -1170,7 +1231,7 @@ async function fileIncomingDocument(env, chatId, file, caption, speaker) {
       : '';
 
   await say(env, chatId,
-    `📄 <b>${escapeHtml(title)}</b>\n${escapeHtml(where)} · ${escapeHtml(date)}${ask}`,
+    `📄 <b>${escapeHtml(title)}</b>\n${escapeHtml(where)} · ${escapeHtml(date)}${unread}${ask}`,
     {
       parse_mode: 'HTML',
       disable_web_page_preview: true,

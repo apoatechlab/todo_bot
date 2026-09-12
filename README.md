@@ -32,7 +32,7 @@ test/                   `npm test` — stubbed upstreams, no network, no keys
 src/app.html            the Mini App page, bundled in as a string (§9)
 wrangler.toml           non-secret config; project id and timezone are filled in
 scripts/wg.sh           wrangler wrapper — prefers wrangler.local.toml
-scripts/google-auth.mjs one-time Google OAuth for the archive (§11)
+scripts/google-auth.mjs one-time Google OAuth for the archive (§12)
 scripts/set-webhook.sh  register the Telegram webhook
 scripts/webhook-info.sh webhook status (first place to look when it goes quiet)
 .dev.vars.example       template for `wrangler dev`
@@ -75,8 +75,8 @@ fork should change the project, chat and timezone (see §3.3).
 | `DELETE_REQUESTS` | `false` | `true` removes a message once it has produced a task |
 | `BOT_USERNAME` | `REPLACE_ME` | for the Mini App link — see §9 |
 | `MINIAPP_SHORT_NAME` | `REPLACE_ME` | BotFather app short name — see §9 |
-| `DRIVE_ROOT_NAME` | `Документы семьи` | Drive folder the archive lives in — see §11 |
-| `DRIVE_ROOT_ID` | — | pin that folder by id once it has been moved — see §11.2 |
+| `DRIVE_ROOT_NAME` | `Документы семьи` | Drive folder the archive lives in — see §12 |
+| `DRIVE_ROOT_ID` | — | pin that folder by id once it has been moved — see §12.2 |
 
 Project members are read from Todoist at runtime and cached for a day — nothing
 to configure.
@@ -292,7 +292,8 @@ Editing, by voice or text:
 - `/reset` — clear conversation memory only
 - `/digest` — post the morning digest into this chat right now (§7)
 - `/school` — list the shaded calendar days; `/school reset` clears them (§10)
-- `/docs` — what is in the document archive (§11)
+- `/docs` — what is in the document archive (§12)
+- `/weekend` — weekend ideas now, rather than waiting for Thursday (§11)
 
 With `DELETE_REQUESTS = "true"`, the message that produced a task is **removed
 once the task exists** — the chat keeps the bot's confirmation instead of a
@@ -722,7 +723,70 @@ in the renderer is what keeps it correct across a live theme switch.
 
 ---
 
-## 11. Document archive — Google Drive
+## 11. Weekend ideas — Thursday evening
+
+Thursday at `WEEKEND_AT`, the chat gets a list of things the family could
+actually do with the coming weekend:
+
+```
+🎉 Идеи на выходные — 12 сент. и 13 сент.
+
+📅 Уже в планах
+• концерт Band of Horses — сб 20:30
+
+💡 Можно сделать
+• сходить в Прадо
+• съездить в Сеговию
+• попробовать ту кофейню на Malasaña
+
+Ещё 4 с этой меткой.
+```
+
+`/weekend` sends it on demand, the way `/digest` does.
+
+### The mark is a Todoist label
+
+The pool is tasks carrying `WEEKEND_LABEL` (default «выходные»). A label rather
+than a store of our own, because it travels with the task: it shows in the
+Todoist app, it can be added or taken off by hand, and nothing here has to stay
+in sync with anything there.
+
+Claude sets it at creation — `weekend: true` on `add_task` — when a task is
+something you *do* with free time rather than an errand: a museum, a trip, a
+restaurant, a show, a walk. Groceries and phone calls are not, even on a
+Saturday. «Это на выходные» about an existing task is `update_task` with
+`weekend: true`, and «убери из выходных» the same with `false`.
+
+**`weekend` is a boolean, not a label array, on purpose.** Todoist replaces the
+whole label array on write, so a model rebuilding it from memory silently drops
+every other label on the task. The tool reads the task's current labels, changes
+the one, and writes the set back.
+
+### What lands in the message
+
+| | |
+|---|---|
+| 📅 Уже в планах | labelled **and** dated into the coming Saturday or Sunday |
+| 💡 Можно сделать | labelled and **undated** — the ideas, shuffled, `WEEKEND_COUNT` of them |
+| — | labelled but dated to some other day: left out, it is scheduled elsewhere |
+
+Shuffled for the same reason the morning nudge is: a fixed order surfaces the
+same stale idea every Thursday until someone gives in, and the family learns to
+skim past it.
+
+### Firing exactly once
+
+Cloudflare cron is UTC-only, so both `0 16 * * 4` and `0 17 * * 4` are
+registered — 18:00 in Madrid in summer and in winter. The handler checks that it
+is still Thursday *locally*, that the local clock is inside a 30-minute window,
+and takes a KV day key, so the off-season firing returns immediately and exactly
+one message goes out. `/weekend` skips all three, and unlike the scheduled run
+it answers even when nothing is marked — a command that replies with silence
+looks broken.
+
+---
+
+## 12. Document archive — Google Drive
 
 Throw a scan or a photo at the bot. It works out what the document is, files it
 in Drive under `<категория>/<человек>/`, and remembers enough to find it later:
@@ -742,7 +806,7 @@ Files land in `Документы семьи/анализы/Ксения/2026-08
 The date is the one printed **on** the document — issued, drawn, valid from —
 not the day it was uploaded; upload date is only the fallback.
 
-### 11.1 One-time Google setup
+### 12.1 One-time Google setup
 
 ```
 npm run google:auth
@@ -806,7 +870,7 @@ Two things worth repeating:
   rather than being pointed at one you made by hand: a folder created in the
   Drive UI is invisible to the app, and uploading into it by id comes back 404.
 
-### 11.2 Putting the archive inside a folder you already share
+### 12.2 Putting the archive inside a folder you already share
 
 The app can always reach a folder **it** created, wherever that folder later
 ends up. So the way to file into an existing shared folder is to move the bot's
@@ -830,7 +894,7 @@ Google's review. Moving the app's own folder gets the same result for free.
 Until the secrets are set, sending a file gets a plain "not connected yet"
 reply; nothing else in the bot is affected.
 
-### 11.3 What happens to a file
+### 12.3 What happens to a file
 
 | Step | |
 |---|---|
@@ -861,7 +925,7 @@ The extension comes from the **file name** first and the MIME type only as a
 fallback: Telegram reports whatever the sending client claimed, and an `.xlsx`
 arriving as `application/octet-stream` is routine.
 
-### 11.4 Categories are a list; people are not
+### 12.4 Categories are a list; people are not
 
 **Categories are controlled.** Asked freely each time, a model files «анализы»
 today and «медицина» in March, and the archive stops being searchable. The list
@@ -874,7 +938,7 @@ name is worse than one filed under «прочее».
 handled the other way round: the names already in the archive are shown to the
 model so it reuses «Ксения» instead of coining «ксюша».
 
-### 11.5 The index
+### 12.5 The index
 
 One KV key per document, `doc:<driveId>`, with the searchable fields in the
 **key metadata** — KV returns metadata directly from `list()`, so a search walks
@@ -889,7 +953,7 @@ Search matches **every** word of the query — «анализ крови» must 
 every анализ in the archive because one word happened to land — and sorts newest
 first, since "последние анализы" is the question people actually ask.
 
-### 11.6 When the document does not say whose it is
+### 12.6 When the document does not say whose it is
 
 Plenty of documents name no one — a lab printout with the patient field blank, a
 photo of a page. The bot files it under the category alone and **asks**: «Чей
@@ -907,7 +971,7 @@ as *messages about documents are not my business* — it answered a correction
 with "такие сообщения не для меня". The rule now says the opposite in as many
 words, with the phrasings people actually use as examples.
 
-### 11.7 Asking what is *inside* a document
+### 12.7 Asking what is *inside* a document
 
 `find_documents` returns titles and links; it cannot see inside, because the
 index stores only category, person, date and title — the contents were never
@@ -943,7 +1007,7 @@ archive and needs no such vocabulary; the cost is that each question re-reads th
 files. If the same handful of values get asked about repeatedly, extraction earns
 its keep — as a layer on top, not a replacement.
 
-### 11.8 Correcting a mistake
+### 12.8 Correcting a mistake
 
 Misclassification is a matter of when, not if, so it is fixable by saying so:
 «это не анализы, а страховка», «это Ксении, не Майи». That is `refile_document`
@@ -952,7 +1016,7 @@ working.
 
 `/docs` prints the archive: how many documents, in which categories.
 
-### 11.9 Who sees what
+### 12.9 Who sees what
 
 These are TIE cards, empadronamiento and medical results. Worth being explicit:
 Drive links are **not** public — they resolve only for people the folder is
@@ -963,7 +1027,7 @@ in KV.
 
 ---
 
-## 12. Safety decisions
+## 13. Safety decisions
 
 - **Chat allowlist** (`ALLOWED_CHAT_IDS`) — the main barrier between the task
   list and the open internet.
@@ -980,7 +1044,7 @@ in KV.
 
 ---
 
-## 13. Gotchas
+## 14. Gotchas
 
 - **Todoist REST v2 was shut down in February 2026.** Anything on Stack Overflow
   using `/rest/v2/` is dead. Use `/api/v1/`.
@@ -1012,7 +1076,7 @@ in KV.
 
 ---
 
-## 14. Possible next steps
+## 15. Possible next steps
 
 - Inline keyboard buttons for confirm-before-delete instead of the on/off flag.
 - Re-nagging for missed high-priority alerts (deliberately absent today, see §8).

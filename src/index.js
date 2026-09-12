@@ -12,7 +12,8 @@
  *            DIGEST_CHAT_ID, DIGEST_AT, DIGEST_SKIP_EMPTY, SUGGEST_COUNT,
  *            ALERT_LEAD_MIN, ALERT_MIN_PRIORITY, ALERT_CHAT_ID,
  *            BOT_USERNAME, MINIAPP_SHORT_NAME, DRIVE_ROOT_NAME, DRIVE_ROOT_ID,
- *            DELETE_REQUESTS
+ *            DELETE_REQUESTS, WEEKEND_LABEL, WEEKEND_AT, WEEKEND_COUNT,
+ *            WEEKEND_CHAT_ID
  */
 
 import APP_HTML from './app.html';
@@ -70,9 +71,14 @@ export default {
   // equivalents of DIGEST_AT are registered and morningDigest() decides which
   // one is actually 07:30 in Madrid today.
   async scheduled(event, env, ctx) {
-    const job = event.cron?.startsWith('*/5')
+    const cron = event.cron || '';
+    // Day-of-week 4 is the Thursday pair; */5 is the alert sweep; the rest is
+    // the morning digest's summer/winter pair.
+    const job = cron.startsWith('*/5')
       ? dueSoonAlerts(env).catch(err => console.error('alerts', err.stack))
-      : morningDigest(env).catch(err => console.error('digest', err.stack));
+      : cron.endsWith(' 4')
+        ? weekendIdeas(env).catch(err => console.error('weekend', err.stack))
+        : morningDigest(env).catch(err => console.error('digest', err.stack));
     ctx.waitUntil(job);
   },
 };
@@ -125,6 +131,7 @@ async function handleUpdate(update, env) {
       'Пиши или наговаривай: «купить молоко завтра», «перенеси дантиста на пятницу», «садик — сделано», «что на сегодня?»\n\n' +
       'Напоминания: «напомни завтра в 18:00 забрать посылку» или «это важно» — подниму приоритет и пришлю сюда сигнал за 5 минут.\n\n' +
       '/digest — прислать утренний дайджест прямо сейчас.\n' +
+      '/weekend — идеи на выходные; сами приходят по четвергам.\n' +
       '/school — дни без школы, закрашенные в календаре.\n' +
       '/docs — архив документов; кинь файл или фото, и он туда попадёт.\n' +
       '/rules — правила бота, /rules reset — сбросить, /reset — забыть контекст разговора.');
@@ -138,6 +145,10 @@ async function handleUpdate(update, env) {
   if (cmd === '/reset') {
     await env.CHATS.delete(`hist:${chatId}`);
     return void say(env, chatId, 'Контекст очищен.');
+  }
+  if (cmd === '/weekend') {
+    await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
+    return void await weekendIdeas(env, { force: true, chatId });
   }
   if (cmd === '/docs') {
     const cats = await getDocCategories(env);
@@ -343,6 +354,7 @@ const tools = [
         description: { type: 'string' },
         priority: { type: 'integer', description: '1 = normal … 4 = urgent' },
         labels: { type: 'array', items: { type: 'string' } },
+        weekend: { type: 'boolean', description: 'True if this is something the family could DO on a free day — an outing, a place to visit, a restaurant, a trip, a show, a walk. Not errands, calls, paperwork or shopping, even at the weekend. Every Thursday these get sent to the chat as ideas.' },
         assignee_id: { type: 'string', description: 'Member id from the roster, if someone was named.' },
       },
       required: ['content'],
@@ -358,6 +370,7 @@ const tools = [
         content: { type: 'string' },
         due_string: { type: 'string', description: '"next friday", or "no date" to clear.' },
         priority: { type: 'integer' },
+        weekend: { type: 'boolean', description: 'Add (true) or remove (false) the weekend-ideas mark. Use on «это на выходные» / «убери из выходных». Omit to leave it as it is.' },
         assignee_id: { type: 'string' },
       },
       required: ['task_id'],
@@ -491,14 +504,27 @@ async function runTool(env, name, args) {
           due_string: args.due_string,
           due_lang: args.due_string ? (env.TODOIST_DUE_LANG || 'ru') : undefined,
           priority: args.priority,
-          labels: args.labels,
+          labels: args.weekend
+            ? [...new Set([...(args.labels || []), weekendLabel(env)])]
+            : args.labels,
           responsible_uid: args.assignee_id,
         },
       });
       return { ok: true, task: compact(t) };
     }
     case 'update_task': {
-      await assertInProject(env, args.task_id);
+      const cur = await assertInProject(env, args.task_id);
+
+      // Todoist replaces the whole label array on write, so build the new set
+      // from what the task actually carries rather than from what the model
+      // remembers — otherwise every other label on it quietly disappears.
+      let labels;
+      if (args.weekend !== undefined) {
+        const L = weekendLabel(env).toLowerCase();
+        const kept = (cur.labels || []).filter(x => x.toLowerCase() !== L);
+        labels = args.weekend ? [...kept, weekendLabel(env)] : kept;
+      }
+
       const t = await todoist(env, `/tasks/${args.task_id}`, {
         method: 'POST',
         body: {
@@ -506,6 +532,7 @@ async function runTool(env, name, args) {
           due_string: args.due_string,
           due_lang: args.due_string ? (env.TODOIST_DUE_LANG || 'ru') : undefined,
           priority: args.priority,
+          labels,
           responsible_uid: args.assignee_id,
         },
       });
@@ -669,6 +696,7 @@ function compact(t) {
     due: t.due?.string ?? null,
     priority: t.priority,
     assignee: t.responsible_uid ?? null,
+    labels: t.labels?.length ? t.labels : undefined,
   };
 }
 
@@ -1348,6 +1376,7 @@ Reminders — raised priority IS the reminder:
 - A task with only a day and no time never alerts. If a reminder was asked for but no time was given, still create or update the task with the raised priority FIRST — never withhold the task while waiting for an answer — and then ask for the time in one short question so the alert can be armed. Do not invent a time yourself.
 - If a task already exists and someone asks to be reminded about it, raise its priority with update_task and add a time — do not create a duplicate.
 - When you set a reminder, say so and state when the alert will arrive, e.g. «Напомню в 17:55».
+- Weekend ideas: when a task is something the family could DO on a free day — «сходить в Прадо», «съездить в Сеговию», «попробовать ту кофейню», концерт, поход, выставка — set weekend: true on add_task. Errands, calls, paperwork and shopping are not, even if they happen on a Saturday. Every Thursday evening the marked ones are posted to the chat as ideas. «Это на выходные» / «убери из выходных» about an existing task is update_task with weekend true/false. Do not mention the mark in your reply unless asked — just set it.
 - When the person states a standing preference ("always…", "never…", "с этого момента…", "правило:"), call add_house_rule instead of just agreeing.
 - Documents file themselves: a photo or a file is classified and put in Drive before you ever see the turn, so never offer to file one. That does NOT mean messages about documents are none of your business — the opposite. Anything said about the document that was just filed is addressed to you: «это анализ Антона», «это Ксении», «это не анализы, а страховка», «это от 5 мая», or a bare name in reply to your question about whose it is. Call refile_document with the id shown under "Последний документ" below. Never answer that such messages are not for you.
 - Two different tools for documents, and picking the wrong one wastes the turn. WHERE something is → find_documents, which returns titles and links only. WHAT IS WRITTEN in it → read_documents, which actually opens the files: «какой был HDL у Антона», «все замеры холестерина», «когда истекает страховка», «какая доза». If the question names a value, a number or a date printed inside a document, it is read_documents.
@@ -1375,7 +1404,8 @@ Members:
 ${people.length ? people.map(p => `- ${p.name} (id ${p.id})`).join('\n') : '- (personal project, no members)'}
 
 Open tasks — overdue first, then upcoming, then undated (id | title | due):
-${tasks.length ? tasks.map(t => `${t.id} | ${t.content} | ${t.due ?? '—'}`).join('\n') : '(none)'}
+${tasks.length ? tasks.map(t => `${t.id} | ${t.content} | ${t.due ?? '—'}`
+    + `${t.labels?.length ? ` | ${t.labels.join(', ')}` : ''}`).join('\n') : '(none)'}
 ${hidden > 0 ? `\n(${hidden} further tasks are dated beyond the horizon and not shown — use search_tasks to reach them.)` : ''}`;
 }
 
@@ -1873,6 +1903,102 @@ async function apiTasks(request, env) {
       url: `${TD_APP}/task/${t.id}`,
     })),
   });
+}
+
+// ========================================================== weekend ideas ===
+/**
+ * Thursday evening: what could we actually do this weekend?
+ *
+ * The pool is tasks carrying the WEEKEND_LABEL — «сходить в Прадо», «съездить в
+ * Сеговию». A Todoist label rather than a store of our own, so the mark travels
+ * with the task, shows up in the app and can be added or taken off by hand
+ * without the bot.
+ */
+const WEEKEND_COUNT = 6;
+
+const weekendLabel = env => (env.WEEKEND_LABEL || 'выходные').trim();
+
+/** Saturday and Sunday of the weekend we are heading into; on a weekend, this one. */
+function comingWeekend(today) {
+  const dow = new Date(`${today}T12:00:00Z`).getUTCDay();   // 0 = Sunday … 6 = Saturday
+  const sat = shiftDate(today, dow === 0 ? -1 : 6 - dow);
+  return { sat, sun: shiftDate(sat, 1) };
+}
+
+const RU_SHORT_DOW = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+
+/**
+ * Posts the weekend list. Same two guards as the morning digest — a local-time
+ * window and a day key — because Cloudflare cron is UTC-only and both the
+ * summer and winter equivalents are registered. `force` is /weekend by hand.
+ */
+async function weekendIdeas(env, { force = false, chatId: to = null } = {}) {
+  const tz = env.TZ_NAME || 'Europe/Madrid';
+  const chatId = to || (env.WEEKEND_CHAT_ID || env.DIGEST_CHAT_ID
+    || (env.ALLOWED_CHAT_IDS || '').split(',')[0] || '').trim();
+  if (!chatId) return void console.warn('weekend: no chat to post to');
+
+  const now = localParts(tz);
+
+  if (!force) {
+    // The cron fires on Thursday UTC; confirm it is still Thursday here.
+    if (new Date(`${now.date}T12:00:00Z`).getUTCDay() !== 4) {
+      return void console.log('weekend: skip, not Thursday locally', now.date);
+    }
+    const [th, tm] = (env.WEEKEND_AT || '18:00').split(':').map(Number);
+    const drift = (now.hour * 60 + now.minute) - (th * 60 + tm);
+    if (drift < 0 || drift >= 30) {
+      return void console.log(`weekend: skip, local ${now.hour}:${now.minute} (drift ${drift}m)`);
+    }
+    const key = `weekend:${now.date}`;
+    if (await env.CHATS.get(key)) return void console.log('weekend: already sent', now.date);
+    await env.CHATS.put(key, '1', { expirationTtl: 172800 });
+  }
+
+  const label = weekendLabel(env);
+  const all = await listTasks(env);
+  const tagged = all.filter(t => (t.labels || []).some(l => l.toLowerCase() === label.toLowerCase()));
+
+  const { sat, sun } = comingWeekend(now.date);
+  const planned = tagged
+    .filter(t => t.due?.date && t.due.date.slice(0, 10) >= sat && t.due.date.slice(0, 10) <= sun)
+    .sort((a, b) => a.due.date.localeCompare(b.due.date));
+  const pool = tagged.filter(t => !t.due?.date);
+
+  if (!planned.length && !pool.length) {
+    if (!force) return void console.log(`weekend: nothing labelled «${label}»`);
+    return void say(env, chatId,
+      `Пока нечего предложить — ни одной задачи с меткой «${label}».\n\n`
+      + 'Скажи «сходить в музей Прадо, это на выходные» — помечу, и в четверг напомню.',
+      { disable_web_page_preview: true });
+  }
+
+  const picks = shuffled(pool).slice(0, Number(env.WEEKEND_COUNT || WEEKEND_COUNT));
+  const link = t => `• <a href="${TD_APP}/task/${t.id}">${escapeHtml(t.content)}</a>`;
+
+  const out = [`🎉 <b>Идеи на выходные</b> — ${shortDate(sat)} и ${shortDate(sun)}`];
+
+  if (planned.length) {
+    out.push('', '📅 <b>Уже в планах</b>');
+    out.push(...planned.map(t => {
+      const d = new Date(`${t.due.date.slice(0, 10)}T12:00:00Z`).getUTCDay();
+      const at = t.due.date.length > 10 ? ` ${t.due.date.slice(11, 16)}` : '';
+      return `${link(t)} — ${RU_SHORT_DOW[d]}${at}`;
+    }));
+  }
+  if (picks.length) {
+    out.push('', '💡 <b>Можно сделать</b>');
+    out.push(...picks.map(link));
+    const rest = pool.length - picks.length;
+    if (rest > 0) out.push('', `<i>Ещё ${rest} с этой меткой.</i>`);
+  }
+
+  await say(env, chatId, out.join('\n'), {
+    parse_mode: 'HTML',
+    disable_web_page_preview: true,
+    ...calendarButton(env),
+  });
+  console.log(`weekend: sent ${planned.length} planned + ${picks.length} of ${pool.length} ideas`);
 }
 
 // ======================================================== due-soon alerts ===

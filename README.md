@@ -1045,8 +1045,17 @@ its keep — as a layer on top, not a replacement.
 
 Misclassification is a matter of when, not if, so it is fixable by saying so:
 «это не анализы, а страховка», «это Ксении, не Майи». That is `refile_document`
-— it renames and moves the file in Drive and re-indexes it, so the link keeps
-working.
+— it renames and moves the file in Drive and re-indexes it. The file id never
+changes, so a link in an old message keeps working.
+
+**By the handful:** `refile_documents` takes the same search fields and moves
+every match — «переложи все паспорта в паспорта», «всё из прочего про школу».
+This is not a convenience: adding a category late leaves everything that belongs
+in it sitting in «прочее», where it stays unless somebody goes looking, and
+that happens every time the list grows. It moves at most 12 per call (each is a
+Drive round trip against a 50-subrequest budget), skips anything already in the
+right place, and reports `remaining` when there is more — call it again
+unchanged.
 
 `/docs` prints the archive: how many documents, in which categories.
 

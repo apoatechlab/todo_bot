@@ -507,6 +507,21 @@ const tools = [
     },
   },
   {
+    name: 'refile_documents',
+    description: 'Move SEVERAL documents at once — «переложи все паспорта в паспорта», «всё из прочего про страховку в страховку», «эти документы Ксении, а не Майи». Use this instead of calling refile_document over and over. Finds them with the same fields as find_documents and moves every match. If it reports `remaining`, call it again with the same arguments.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        category: { type: 'string', description: 'Look only in this category — «прочее» when digging things out of the junk drawer.' },
+        person: { type: 'string', description: 'Look only at this person\'s documents.' },
+        query: { type: 'string', description: 'Words that must ALL appear in the title, e.g. «паспорт». Leave out to take a whole category.' },
+        to_category: { type: 'string', description: 'Category to move them into. Must be one of the archive categories — add it with add_doc_category first if it does not exist.' },
+        to_person: { type: 'string', description: 'Person to move them to. Empty string makes them household documents with no owner.' },
+        limit: { type: 'integer', description: 'How many to move in one call. Default and maximum 12.' },
+      },
+    },
+  },
+  {
     name: 'refile_document',
     description: 'Fix a document that was filed wrongly — move it to another category or person, correct its date or title. Use after «это не анализы, а страховка» or «это Ксении». Call find_documents first to get the id.',
     input_schema: {
@@ -693,27 +708,44 @@ async function runTool(env, name, args) {
       if (args.category && !cats.includes(args.category)) {
         return { error: `Категория «${args.category}» не из списка: ${cats.join(', ')}` };
       }
-      const next = {
-        ...rec,
-        category: args.category ?? rec.category,
-        person: args.person !== undefined ? String(args.person).trim() : rec.person,
-        date: /^\d{4}-\d{2}-\d{2}$/.test(args.date || '') ? args.date : rec.date,
-        title: args.title ? String(args.title).trim().slice(0, 90) : rec.title,
+      return { ok: true, document: docBrief(await moveDocument(env, rec, args)) };
+    }
+    case 'refile_documents': {
+      const cats = await getDocCategories(env);
+      if (args.to_category && !cats.includes(args.to_category)) {
+        return { error: `Категория «${args.to_category}» не из списка: ${cats.join(', ')}` };
+      }
+      if (!args.to_category && args.to_person === undefined) {
+        return { error: 'Нечего менять — задай to_category или to_person.' };
+      }
+
+      const from = args.category && cats.includes(args.category) ? args.category : undefined;
+      const { total, docs } = await searchDocs(env, {
+        category: from, person: args.person, query: args.query,
+        limit: Math.min(Math.max(args.limit || MAX_BULK_REFILE, 1), MAX_BULK_REFILE),
+      });
+      if (!docs.length) {
+        return { moved: 0, note: 'Ничего не нашлось.', categories: cats,
+          hint: 'query ищет по заголовку. Попробуй только category, без query.' };
+      }
+
+      const done = [];
+      for (const rec of docs) {
+        // Skip what is already where it is being sent, so a repeated run costs
+        // nothing and the report is honest about what actually moved.
+        const same = (!args.to_category || rec.category === args.to_category)
+          && (args.to_person === undefined || (rec.person || '') === String(args.to_person).trim());
+        if (same) continue;
+        done.push(docBrief(await moveDocument(env, rec,
+          { category: args.to_category, person: args.to_person })));
+      }
+      return {
+        moved: done.length,
+        documents: done,
+        // total counts everything that matched; docs was capped.
+        ...(total > docs.length ? { remaining: total - docs.length,
+          hint: 'Ещё не всё — повтори тот же вызов.' } : {}),
       };
-
-      const root = await driveRoot(env);
-      const catDir = await driveFolder(env, next.category, root);
-      const dir = next.person ? await driveFolder(env, next.person, catDir) : catDir;
-      const name = `${next.date} — ${next.title}.${rec.ext || extFor(rec.fileName, rec.mimeType)}`
-        .replace(/[/\\]/g, '-');
-      const moved = await driveMove(env, rec.id, { name, parentId: dir, oldParentId: rec.folderId });
-
-      next.folderId = dir;
-      next.fileName = moved.name ?? name;
-      next.link = moved.webViewLink ?? rec.link;
-      await indexDoc(env, next);
-      return { ok: true, document: { id: next.id, title: next.title, date: next.date,
-        person: next.person || null, category: next.category, link: next.link } };
     }
     case 'remove_house_rule': {
       const rules = await getRules(env);
@@ -1141,6 +1173,8 @@ ${people.length ? people.map(p => `- ${p}`).join('\n') : '(пока никого
 // the base64 well under the 32 MB request cap and out of the Worker's memory
 // ceiling.
 const MAX_READ_DOCS = 6;
+// Each move is a Drive round trip; a Worker gets 50 subrequests on the free plan.
+const MAX_BULK_REFILE = 12;
 const MAX_READ_BYTES = 12 * 1024 * 1024;
 
 /**
@@ -1328,6 +1362,37 @@ async function repairArchive(env, budget = 30) {
     + ` repointed ${repointed}, more=${ranOut}`);
   return { merged, movedFiles, repointed, more: ranOut };
 }
+
+/**
+ * Move one document: rename it, reparent it in Drive, re-index it.
+ *
+ * The file id never changes, so the link in an old message keeps working.
+ */
+async function moveDocument(env, rec, changes) {
+  const next = {
+    ...rec,
+    category: changes.category ?? rec.category,
+    person: changes.person !== undefined ? String(changes.person).trim() : rec.person,
+    date: /^\d{4}-\d{2}-\d{2}$/.test(changes.date || '') ? changes.date : rec.date,
+    title: changes.title ? String(changes.title).trim().slice(0, 90) : rec.title,
+  };
+
+  const root = await driveRoot(env);
+  const catDir = await driveFolder(env, next.category, root);
+  const dir = next.person ? await driveFolder(env, next.person, catDir) : catDir;
+  const name = `${next.date} — ${next.title}.${rec.ext || extFor(rec.fileName, rec.mimeType)}`
+    .replace(/[/\\]/g, '-');
+  const moved = await driveMove(env, rec.id, { name, parentId: dir, oldParentId: rec.folderId });
+
+  next.folderId = dir;
+  next.fileName = moved.name ?? name;
+  next.link = moved.webViewLink ?? rec.link;
+  await indexDoc(env, next);
+  return next;
+}
+
+const docBrief = d => ({ id: d.id, title: d.title, date: d.date,
+  person: d.person || null, category: d.category, link: d.link });
 
 /** Index entry. Metadata rides on the KV key so search never reads values. */
 async function indexDoc(env, rec) {
@@ -1581,7 +1646,8 @@ Reminders — raised priority IS the reminder:
 - Documents file themselves: a photo or a file is classified and put in Drive before you ever see the turn, so never offer to file one. That does NOT mean messages about documents are none of your business — the opposite. Anything said about the document that was just filed is addressed to you: «это анализ Антона», «это Ксении», «это не анализы, а страховка», «это от 5 мая», or a bare name in reply to your question about whose it is. Call refile_document with the id shown under "Последний документ" below. Never answer that such messages are not for you.
 - Two different tools for documents, and picking the wrong one wastes the turn. WHERE something is → find_documents, which returns titles and links only. WHAT IS WRITTEN in it → read_documents, which actually opens the files: «какой был HDL у Антона», «все замеры холестерина», «когда истекает страховка», «какая доза». If the question names a value, a number or a date printed inside a document, it is read_documents.
 - read_documents answers with «(документ 2)» markers. Replace each one with a link to that document from the "read" list it returned — a number the family cannot trace back to its source is worse than no number. Never state a medical value without its link, and never add an interpretation of your own on top of what the document says.
-- To fix a document filed wrongly, find_documents first, then refile_document.
+- To fix a document filed wrongly, find_documents first, then refile_document. For more than one at a time — «переложи все паспорта», «всё из прочего про школу» — use refile_documents instead of calling the single one repeatedly; if it comes back with "remaining", call it again unchanged until it does not.
+- After adding a category with add_doc_category, check «прочее» for documents that belong in it and offer to move them. A category added late leaves its documents behind in the junk drawer, which is where they stay unless somebody goes looking.
 - School closures — каникулы, «нет школы», teacher days, a public holiday that shuts the school — are whole-day facts, not tasks. Call add_day_marks, never add_task. This is the one place you DO work out calendar dates yourself: pass ISO YYYY-MM-DD and resolve the year from today, remembering a school year crosses New Year. Put every range from one message into one call.
 - Reply in the language the person wrote in, one or two lines, stating only what changed. No preamble.
 - Never paste a Todoist link into your text. Every task you add or change already gets a button under the reply — a link written out as well is noise, and task titles break Markdown.

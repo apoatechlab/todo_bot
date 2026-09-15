@@ -151,6 +151,22 @@ async function handleUpdate(update, env) {
     return void await weekendIdeas(env, { force: true, chatId });
   }
   if (cmd === '/docs') {
+    if (text.includes('fix')) {
+      await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
+      try {
+        const r = await repairArchive(env);
+        return void say(env, chatId,
+          r.merged.length || r.movedFiles
+            ? `Слил ${r.merged.length} дублей папок, перенёс ${r.movedFiles} файлов`
+              + `${r.repointed ? `, поправил ${r.repointed} записей` : ''}.\n`
+              + r.merged.map(m => `• ${m}`).join('\n')
+              + (r.more ? '\n\n_Дошёл до лимита запросов — запусти `/docs fix` ещё раз._' : '')
+            : 'Дублей папок не нашёл — в архиве порядок.');
+      } catch (e) {
+        console.error('repair', e.stack);
+        return void say(env, chatId, `⚠️ Не смог прибраться: ${e.message}`);
+      }
+    }
     const cats = await getDocCategories(env);
     const { total } = await searchDocs(env, { limit: 1 });
     const counts = await Promise.all(cats.map(async c => {
@@ -174,7 +190,8 @@ async function handleUpdate(update, env) {
       + (used.length ? used.map(([c, n]) => `• ${c} — ${n}`).join('\n') : '_пока пусто_')
       + folder
       + `\n\n_Категории: ${cats.join(', ')}._`
-      + '\n_Кинь файл или фото — разберу и разложу. «Найди анализы Ксении» — найду._');
+      + '\n_Кинь файл или фото — разберу и разложу. «Найди анализы Ксении» — найду._'
+      + '\n_`/docs fix` — слить папки-дубли, если они завелись._');
   }
   if (cmd === '/school') {
     if (text.includes('reset')) {
@@ -439,6 +456,17 @@ const tools = [
     },
   },
   {
+    name: 'add_doc_category',
+    description: 'Add a category to the document archive. Use when a document has no sensible home in the current list — «заведи категорию для прав», or when you were about to file something as «прочее» and the person named what it is. Ask first if you are inventing the name yourself.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Short, lowercase, plural, in Russian — «паспорта», «права», «квитанции».' },
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'find_documents',
     description: 'Search the family document archive in Google Drive — анализы, страховки, прописка, TIE, договоры, счета. Call this whenever someone asks to find, show or send a document. Returns titles, dates and a Drive link for each.',
     input_schema: {
@@ -598,6 +626,21 @@ async function runTool(env, name, args) {
       const [gone] = marks.splice(i, 1);
       const kept = await putMarks(env, marks, today);
       return { ok: true, removed: markLine(gone), marks: kept.map((m, n) => `${n + 1}. ${markLine(m)}`) };
+    }
+    case 'add_doc_category': {
+      const name = String(args.name || '').trim().toLowerCase().slice(0, 30);
+      if (!name) return { error: 'Пустое название.' };
+      const cats = await getDocCategories(env);
+      if (cats.some(c => c.toLowerCase() === name)) {
+        return { ok: true, note: `«${name}» уже есть.`, categories: cats };
+      }
+      if (cats.length >= 30) return { error: 'Категорий уже 30 — больше не поможет, а найти станет труднее.' };
+      // «прочее» stays last: it is the fallback, and a list that ends in it
+      // reads as "…or none of the above".
+      const next = [...cats.filter(c => c !== 'прочее'), name,
+        ...(cats.includes('прочее') ? ['прочее'] : [])];
+      await env.CHATS.put('doccats', JSON.stringify(next));
+      return { ok: true, categories: next };
     }
     case 'find_documents': {
       const cats = await getDocCategories(env);
@@ -794,27 +837,56 @@ async function drive(env, path, { method = 'GET', body } = {}) {
 /** Drive query strings are single-quoted; a name with an apostrophe would end one. */
 const driveQuote = s => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
+/** Folders of one name under a parent, oldest first. */
+async function findFolders(env, name, parentId) {
+  const q = `name = '${driveQuote(name)}' and '${driveQuote(parentId)}' in parents`
+    + ` and mimeType = '${FOLDER_MIME}' and trashed = false`;
+  const r = await drive(env, `/files?q=${encodeURIComponent(q)}`
+    + '&fields=files(id,name,createdTime)&orderBy=createdTime&pageSize=20');
+  return r.files || [];
+}
+
 /**
  * Find or create a folder under `parentId`, caching the id for a month.
  *
- * Two requests the first time a category or person appears, none afterwards —
- * which matters because a Worker invocation gets 50 subrequests in total.
+ * Two uploads arriving together — a burst of files in the chat is several
+ * separate webhooks, so several Worker invocations at once — both miss the
+ * cache, both find nothing, and both create the folder. That is how the archive
+ * grew several «анализы» side by side.
+ *
+ * Two things stop it. Lookups take the OLDEST match rather than any match, so
+ * everyone converges on the same folder even while duplicates exist; and after
+ * creating one we look again, and if somebody else's folder is older we bin
+ * ours — it is empty, we just made it — and use theirs. Whatever still slips
+ * through is swept up by /docs fix.
  */
 async function driveFolder(env, name, parentId) {
   const key = `gdrive:dir:${parentId}:${name}`;
   const hit = await env.CHATS.get(key);
   if (hit) return hit;
 
-  const q = `name = '${driveQuote(name)}' and '${driveQuote(parentId)}' in parents`
-    + ` and mimeType = '${FOLDER_MIME}' and trashed = false`;
-  const found = await drive(env, `/files?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`);
-  const id = found.files?.[0]?.id ?? (await drive(env, '/files?fields=id', {
+  const remember = async id => {
+    await env.CHATS.put(key, id, { expirationTtl: 2592000 });
+    return id;
+  };
+
+  const found = await findFolders(env, name, parentId);
+  if (found.length) return remember(found[0].id);
+
+  const mine = (await drive(env, '/files?fields=id', {
     method: 'POST',
     body: { name, mimeType: FOLDER_MIME, parents: [parentId] },
   })).id;
 
-  await env.CHATS.put(key, id, { expirationTtl: 2592000 });
-  return id;
+  const after = await findFolders(env, name, parentId);
+  const winner = after[0]?.id ?? mine;
+  if (winner !== mine) {
+    // Lost the race. Ours is empty and one second old; trash it rather than
+    // leave a twin behind.
+    await drive(env, `/files/${mine}`, { method: 'PATCH', body: { trashed: true } })
+      .catch(e => console.warn('race cleanup:', e.message));
+  }
+  return remember(winner);
 }
 
 /**
@@ -891,7 +963,8 @@ async function driveMove(env, fileId, { name, parentId, oldParentId }) {
  * model so it reuses a spelling instead of inventing one.
  */
 const DEFAULT_DOC_CATEGORIES = [
-  'анализы', 'страховка', 'прописка', 'TIE', 'договоры', 'счета', 'школа', 'прочее',
+  'паспорта', 'TIE', 'прописка', 'анализы', 'страховка',
+  'договоры', 'счета', 'школа', 'прочее',
 ];
 
 // Telegram will not let a bot download more than this, whatever the plan.
@@ -1128,6 +1201,108 @@ async function readDocuments(env, docs, question, matched) {
     matched,
     ...(skipped.length ? { skipped: skipped.map(d => `${d.date} · ${d.title} — ${d.why}`) } : {}),
   };
+}
+
+/**
+ * Sweep up duplicate folders: move everything into the oldest of each name and
+ * bin the empties.
+ *
+ * Needed because the race above was live for a while, and because no amount of
+ * care at write time fully closes a read-then-create window against a service
+ * that has no atomic "create if absent".
+ *
+ * Bounded by a subrequest budget — a Worker invocation gets 50 on the free plan
+ * — and reports whether more is left, so /docs fix can simply be run again.
+ */
+async function repairArchive(env, budget = 30) {
+  let calls = 0;
+  let ranOut = false;
+  const spend = () => { if (calls >= budget) { ranOut = true; return false; } calls++; return true; };
+
+  const root = await driveRoot(env);
+  const remap = new Map();          // trashed folder id -> the one that survived
+  const merged = [];
+  let movedFiles = 0;
+
+  const childrenOf = async (parentId, foldersOnly) => {
+    const q = `'${driveQuote(parentId)}' in parents and trashed = false`
+      + (foldersOnly ? ` and mimeType = '${FOLDER_MIME}'` : '');
+    const r = await drive(env, `/files?q=${encodeURIComponent(q)}`
+      + '&fields=files(id,name,createdTime)&orderBy=createdTime&pageSize=200');
+    return r.files || [];
+  };
+
+  /** Merge same-named folders under one parent; returns the survivors. */
+  async function mergeUnder(parentId, where) {
+    if (!spend()) return [];
+    const byName = new Map();
+    for (const f of await childrenOf(parentId, true)) {
+      const k = f.name.trim().toLowerCase();
+      if (!byName.has(k)) byName.set(k, []);
+      byName.get(k).push(f);          // orderBy=createdTime, so oldest first
+    }
+
+    const keepers = [];
+    for (const group of byName.values()) {
+      const [keep, ...dupes] = group;
+      keepers.push(keep);
+
+      for (const dup of dupes) {
+        if (!spend()) return keepers;
+        const kids = await childrenOf(dup.id, false);
+
+        let emptied = true;
+        for (const kid of kids) {
+          if (!spend()) { emptied = false; break; }
+          await drive(env, `/files/${kid.id}?addParents=${keep.id}`
+            + `&removeParents=${dup.id}&fields=id`, { method: 'PATCH', body: {} });
+          movedFiles++;
+        }
+        remap.set(dup.id, keep.id);
+        if (!emptied) return keepers;
+
+        if (!spend()) return keepers;
+        await drive(env, `/files/${dup.id}`, { method: 'PATCH', body: { trashed: true } });
+        merged.push(`${where}${keep.name}`);
+      }
+    }
+    return keepers;
+  }
+
+  const cats = await mergeUnder(root, '');
+  for (const c of cats) {
+    if (ranOut) break;
+    await mergeUnder(c.id, `${c.name}/`);
+  }
+
+  // Point the index at the folders that survived. KV operations are not
+  // subrequests, so this part is not on the budget.
+  let repointed = 0;
+  for (let cursor; ;) {
+    const page = await env.CHATS.list({ prefix: 'doc:', cursor, limit: 1000 });
+    for (const k of page.keys) {
+      const rec = await env.CHATS.get(k.name, 'json');
+      if (rec && remap.has(rec.folderId)) {
+        rec.folderId = remap.get(rec.folderId);
+        await indexDoc(env, rec);
+        repointed++;
+      }
+    }
+    if (page.list_complete) break;
+    cursor = page.cursor;
+  }
+
+  // The folder cache may name something we just binned.
+  for (let cursor; ;) {
+    const page = await env.CHATS.list({ prefix: 'gdrive:dir:', cursor, limit: 1000 });
+    for (const k of page.keys) await env.CHATS.delete(k.name);
+    if (page.list_complete) break;
+    cursor = page.cursor;
+  }
+
+  console.log(`repair: merged ${merged.length} folders, moved ${movedFiles} files,`
+    + ` repointed ${repointed}, more=${ranOut}`);
+  return { merged, movedFiles, repointed, more: ranOut };
 }
 
 /** Index entry. Metadata rides on the KV key so search never reads values. */
@@ -1378,6 +1553,7 @@ Reminders — raised priority IS the reminder:
 - When you set a reminder, say so and state when the alert will arrive, e.g. «Напомню в 17:55».
 - Weekend ideas: when a task is something the family could DO on a free day — «сходить в Прадо», «съездить в Сеговию», «попробовать ту кофейню», концерт, поход, выставка — set weekend: true on add_task. Errands, calls, paperwork and shopping are not, even if they happen on a Saturday. Every Thursday evening the marked ones are posted to the chat as ideas. «Это на выходные» / «убери из выходных» about an existing task is update_task with weekend true/false. Do not mention the mark in your reply unless asked — just set it.
 - When the person states a standing preference ("always…", "never…", "с этого момента…", "правило:"), call add_house_rule instead of just agreeing.
+- If a document has no sensible category and «прочее» would be a shrug — паспорт, права, квитанция — call add_doc_category and then refile_document into it, rather than leaving it in «прочее». One new category is better than a drawer labelled "misc".
 - Documents file themselves: a photo or a file is classified and put in Drive before you ever see the turn, so never offer to file one. That does NOT mean messages about documents are none of your business — the opposite. Anything said about the document that was just filed is addressed to you: «это анализ Антона», «это Ксении», «это не анализы, а страховка», «это от 5 мая», or a bare name in reply to your question about whose it is. Call refile_document with the id shown under "Последний документ" below. Never answer that such messages are not for you.
 - Two different tools for documents, and picking the wrong one wastes the turn. WHERE something is → find_documents, which returns titles and links only. WHAT IS WRITTEN in it → read_documents, which actually opens the files: «какой был HDL у Антона», «все замеры холестерина», «когда истекает страховка», «какая доза». If the question names a value, a number or a date printed inside a document, it is read_documents.
 - read_documents answers with «(документ 2)» markers. Replace each one with a link to that document from the "read" list it returned — a number the family cannot trace back to its source is worse than no number. Never state a medical value without its link, and never add an interpretation of your own on top of what the document says.

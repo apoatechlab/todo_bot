@@ -292,7 +292,7 @@ Editing, by voice or text:
 - `/reset` — clear conversation memory only
 - `/digest` — post the morning digest into this chat right now (§7)
 - `/school` — list the shaded calendar days; `/school reset` clears them (§10)
-- `/docs` — what is in the document archive (§12)
+- `/docs` — what is in the document archive; `/docs fix` merges duplicate folders (§12.5)
 - `/weekend` — weekend ideas now, rather than waiting for Thursday (§11)
 
 With `DELETE_REQUESTS = "true"`, the message that produced a task is **removed
@@ -934,11 +934,37 @@ model must pick from it, and anything it invents anyway is rewritten to
 `прочее` on the way in — a document filed under a category no search will ever
 name is worse than one filed under «прочее».
 
+Controlled is not the same as frozen, and the difference showed: with no
+`паспорта` in the list, passports landed in «прочее», which is where documents
+go to be lost. The list is editable now — `add_doc_category`, which the model
+reaches for when «прочее» would be a shrug — and «прочее» is kept last, so the
+list reads as "…or none of the above".
+
 **People are free text**, because a family gains names no roster has. Drift is
 handled the other way round: the names already in the archive are shown to the
 model so it reuses «Ксения» instead of coining «ксюша».
 
-### 12.5 The index
+### 12.5 Duplicate folders, and why they happened
+
+Several folders appeared in Drive under the same name. A burst of files in the
+chat is several webhooks, so several Worker invocations at once; each one missed
+the folder cache, each looked for «анализы», each found nothing, and each
+created it. A read-then-create race against an API with no atomic "create if
+absent".
+
+Two things narrow it and one cleans up after it:
+
+- **Lookups take the oldest match**, not any match, so every invocation
+  converges on the same folder even while twins exist.
+- **After creating, look again.** If someone else's folder is older, bin ours —
+  it is empty and a second old — and use theirs.
+- **`/docs fix`** merges whatever still got through: everything moves into the
+  oldest folder of each name, the empties are trashed, index records are
+  repointed and the folder cache is dropped. It is bounded by a subrequest
+  budget (a Worker gets 50 on the free plan) and says when there is more left,
+  so it can simply be run again.
+
+### 12.6 The index
 
 One KV key per document, `doc:<driveId>`, with the searchable fields in the
 **key metadata** — KV returns metadata directly from `list()`, so a search walks
@@ -953,7 +979,7 @@ Search matches **every** word of the query — «анализ крови» must 
 every анализ in the archive because one word happened to land — and sorts newest
 first, since "последние анализы" is the question people actually ask.
 
-### 12.6 When the document does not say whose it is
+### 12.7 When the document does not say whose it is
 
 Plenty of documents name no one — a lab printout with the patient field blank, a
 photo of a page. The bot files it under the category alone and **asks**: «Чей
@@ -971,7 +997,7 @@ as *messages about documents are not my business* — it answered a correction
 with "такие сообщения не для меня". The rule now says the opposite in as many
 words, with the phrasings people actually use as examples.
 
-### 12.7 Asking what is *inside* a document
+### 12.8 Asking what is *inside* a document
 
 `find_documents` returns titles and links; it cannot see inside, because the
 index stores only category, person, date and title — the contents were never
@@ -1007,7 +1033,7 @@ archive and needs no such vocabulary; the cost is that each question re-reads th
 files. If the same handful of values get asked about repeatedly, extraction earns
 its keep — as a layer on top, not a replacement.
 
-### 12.8 Correcting a mistake
+### 12.9 Correcting a mistake
 
 Misclassification is a matter of when, not if, so it is fixable by saying so:
 «это не анализы, а страховка», «это Ксении, не Майи». That is `refile_document`
@@ -1016,7 +1042,7 @@ working.
 
 `/docs` prints the archive: how many documents, in which categories.
 
-### 12.9 Who sees what
+### 12.10 Who sees what
 
 These are TIE cards, empadronamiento and medical results. Worth being explicit:
 Drive links are **not** public — they resolve only for people the folder is

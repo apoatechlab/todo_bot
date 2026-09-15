@@ -50,12 +50,21 @@ eq('Friday still means tomorrow', W.comingWeekend('2026-09-11'),
    { sat: '2026-09-12', sun: '2026-09-13' });
 
 // --------------------------------------------------------- the selection ----
+// Dates are derived from today, not written in: «dated into the coming
+// weekend» has to hold whenever the suite runs, not only in the week it was
+// written. (It was written with 12 September hard-coded, and broke three days
+// later.)
+const today = new Date().toISOString().slice(0, 10);
+const { sat, sun } = W.comingWeekend(today);
+const afterWeekend = new Date(Date.parse(`${sun}T12:00:00Z`) + 2 * 864e5)
+  .toISOString().slice(0, 10);
+
 tasks = [
   { id: '1', content: 'сходить в Прадо', labels: ['выходные'] },
   { id: '2', content: 'съездить в Сеговию', labels: ['выходные'] },
   { id: '3', content: 'купить молоко', labels: [] },
-  { id: '4', content: 'концерт', labels: ['выходные'], due: { date: '2026-09-12T20:30:00' } },
-  { id: '5', content: 'дантист', labels: ['выходные'], due: { date: '2026-09-16' } },
+  { id: '4', content: 'концерт', labels: ['выходные'], due: { date: `${sat}T20:30:00` } },
+  { id: '5', content: 'дантист', labels: ['выходные'], due: { date: afterWeekend } },
   { id: '6', content: 'ВЫХОДНЫЕ регистр', labels: ['ВЫХОДНЫЕ'] },
 ];
 sent.length = 0;
@@ -67,7 +76,10 @@ ok('one dated into the weekend shows as planned',
    /Уже в планах[\s\S]*концерт/.test(text()), text());
 ok('with its weekday and time', /сб 20:30/.test(text()));
 ok('a labelled task dated outside the weekend is not shown', !text().includes('дантист'));
-ok('the weekend dates are in the header', /12 сент.*13 сент/.test(text()), text());
+const ruShort = d => new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+  .format(new Date(`${d}T12:00:00Z`));
+ok('the weekend dates are in the header',
+   text().includes(ruShort(sat)) && text().includes(ruShort(sun)), text());
 ok('every idea links to its task', (text().match(/app\/task\//g) || []).length >= 3);
 
 // --------------------------------------------------------------- cap --------
@@ -91,7 +103,6 @@ eq('the scheduled job stays silent instead', sent.length, 0);
 
 // ------------------------------------------------------- the time guards ----
 // These run on a real clock, so assert the guard's behaviour, not a fixed day.
-const today = new Date().toISOString().slice(0, 10);
 const isThursday = new Date(`${today}T12:00:00Z`).getUTCDay() === 4;
 tasks = [{ id: '1', content: 'идея', labels: ['выходные'] }];
 sent.length = 0;

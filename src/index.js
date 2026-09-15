@@ -83,6 +83,15 @@ export default {
   },
 };
 
+/**
+ * Every reply here is `await`ed, including the ones that end a branch.
+ *
+ * `return void say(...)` orphans the promise: handleUpdate resolves, the
+ * ctx.waitUntil that wraps it settles, and the runtime is free to cancel the
+ * in-flight sendMessage. Short commands usually win that race. /docs fix, after
+ * half a minute of Drive calls, did not — the repair ran, logged what it had
+ * done, and the answer never left the Worker.
+ */
 async function handleUpdate(update, env) {
   const msg = update?.message;
   if (!msg) return;
@@ -102,7 +111,7 @@ async function handleUpdate(update, env) {
       text = await transcribe(env, voice.file_id);
     } catch (e) {
       console.error('transcribe', e.stack);
-      return void say(env, chatId, `⚠️ Не смог разобрать голосовое: ${e.message}`);
+      return void await say(env, chatId, `⚠️ Не смог разобрать голосовое: ${e.message}`);
     }
   }
   // A file or a photo goes to the archive, not into the task loop. Photos have
@@ -127,7 +136,7 @@ async function handleUpdate(update, env) {
   const cmd = text.trim().split(/\s+/)[0].split('@')[0].toLowerCase();
 
   if (cmd === '/start' || cmd === '/help') {
-    return void say(env, chatId,
+    return void await say(env, chatId,
       'Пиши или наговаривай: «купить молоко завтра», «перенеси дантиста на пятницу», «садик — сделано», «что на сегодня?»\n\n' +
       'Напоминания: «напомни завтра в 18:00 забрать посылку» или «это важно» — подниму приоритет и пришлю сюда сигнал за 5 минут.\n\n' +
       '/digest — прислать утренний дайджест прямо сейчас.\n' +
@@ -144,7 +153,7 @@ async function handleUpdate(update, env) {
   }
   if (cmd === '/reset') {
     await env.CHATS.delete(`hist:${chatId}`);
-    return void say(env, chatId, 'Контекст очищен.');
+    return void await say(env, chatId, 'Контекст очищен.');
   }
   if (cmd === '/weekend') {
     await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
@@ -152,10 +161,13 @@ async function handleUpdate(update, env) {
   }
   if (cmd === '/docs') {
     if (text.includes('fix')) {
+      // Each folder merged is several round trips to Drive; without a word up
+      // front the command looks like it died.
+      await say(env, chatId, '🧹 Разбираю папки в Drive, это займёт до минуты…');
       await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
       try {
         const r = await repairArchive(env);
-        return void say(env, chatId,
+        return void await say(env, chatId,
           r.merged.length || r.movedFiles
             ? `Слил ${r.merged.length} дублей папок, перенёс ${r.movedFiles} файлов`
               + `${r.repointed ? `, поправил ${r.repointed} записей` : ''}.\n`
@@ -164,7 +176,7 @@ async function handleUpdate(update, env) {
             : 'Дублей папок не нашёл — в архиве порядок.');
       } catch (e) {
         console.error('repair', e.stack);
-        return void say(env, chatId, `⚠️ Не смог прибраться: ${e.message}`);
+        return void await say(env, chatId, `⚠️ Не смог прибраться: ${e.message}`);
       }
     }
     const cats = await getDocCategories(env);
@@ -185,7 +197,7 @@ async function handleUpdate(update, env) {
       folder = `\n\n_Drive не отвечает: ${e.message}_`;
     }
 
-    return void say(env, chatId,
+    return void await say(env, chatId,
       `*Архив документов* — ${total} шт.\n`
       + (used.length ? used.map(([c, n]) => `• ${c} — ${n}`).join('\n') : '_пока пусто_')
       + folder
@@ -196,24 +208,24 @@ async function handleUpdate(update, env) {
   if (cmd === '/school') {
     if (text.includes('reset')) {
       await env.CHATS.delete('marks');
-      return void say(env, chatId, 'Отметки в календаре очищены.');
+      return void await say(env, chatId, 'Отметки в календаре очищены.');
     }
     const marks = await getMarks(env);
     if (!marks.length) {
-      return void say(env, chatId,
+      return void await say(env, chatId,
         'Отметок нет. Скажи «в школе каникулы с 22 декабря по 7 января» — закрашу эти дни в календаре.');
     }
-    return void say(env, chatId,
+    return void await say(env, chatId,
       `*Отметки в календаре:*\n${marks.map((m, i) => `${i + 1}. ${markLine(m)}`).join('\n')}\n\n`
       + '_«убери отметку N» чтобы удалить, /school reset — очистить всё._');
   }
   if (cmd === '/rules') {
     if (text.includes('reset')) {
       await env.CHATS.delete('rules');
-      return void say(env, chatId, 'Правила сброшены на стандартные.');
+      return void await say(env, chatId, 'Правила сброшены на стандартные.');
     }
     const rules = await getRules(env);
-    return void say(env, chatId,
+    return void await say(env, chatId,
       `*Правила бота:*\n${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}\n\n` +
       '_Скажи или напиши «правило: …» чтобы добавить, «убери правило N» чтобы удалить._');
   }
@@ -1219,7 +1231,6 @@ async function repairArchive(env, budget = 30) {
   let ranOut = false;
   const spend = () => { if (calls >= budget) { ranOut = true; return false; } calls++; return true; };
 
-  const root = await driveRoot(env);
   const remap = new Map();          // trashed folder id -> the one that survived
   const merged = [];
   let movedFiles = 0;
@@ -1267,6 +1278,19 @@ async function repairArchive(env, budget = 30) {
       }
     }
     return keepers;
+  }
+
+  // The archive root can be duplicated too — it is created by the same racing
+  // lookup as every other folder. Merge those first, or the sweep tidies inside
+  // one root while the twin sits next to it holding half the files.
+  const pinned = (env.DRIVE_ROOT_ID || '').trim();
+  let root;
+  if (pinned && pinned !== 'REPLACE_ME') {
+    root = pinned;
+  } else {
+    const wanted = (env.DRIVE_ROOT_NAME || 'Документы семьи').trim().toLowerCase();
+    const tops = await mergeUnder('root', '');
+    root = tops.find(f => f.name.trim().toLowerCase() === wanted)?.id ?? await driveRoot(env);
   }
 
   const cats = await mergeUnder(root, '');
@@ -1355,7 +1379,7 @@ const docLine = d => `${d.date || '—'} · ${d.title}`
  */
 async function fileIncomingDocument(env, chatId, file, caption, speaker) {
   if (!env.GOOGLE_REFRESH_TOKEN) {
-    return void say(env, chatId,
+    return void await say(env, chatId,
       'Архив документов ещё не подключён к Google Drive — нужен разовый вход '
       + '(npm run google:auth). Файл я не сохранил.');
   }
@@ -1364,7 +1388,7 @@ async function fileIncomingDocument(env, chatId, file, caption, speaker) {
   // grounds that Claude cannot read it, loses the document to save the labelling
   // — so it gets stored either way and labelled from its name and caption.
   if ((file.file_size || 0) > MAX_DOC_BYTES) {
-    return void say(env, chatId,
+    return void await say(env, chatId,
       `Файл ${Math.round(file.file_size / 1048576)} МБ — Telegram не отдаёт ботам больше 20 МБ.`);
   }
 
@@ -2143,7 +2167,7 @@ async function weekendIdeas(env, { force = false, chatId: to = null } = {}) {
 
   if (!planned.length && !pool.length) {
     if (!force) return void console.log(`weekend: nothing labelled «${label}»`);
-    return void say(env, chatId,
+    return void await say(env, chatId,
       `Пока нечего предложить — ни одной задачи с меткой «${label}».\n\n`
       + 'Скажи «сходить в музей Прадо, это на выходные» — помечу, и в четверг напомню.',
       { disable_web_page_preview: true });

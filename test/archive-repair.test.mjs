@@ -149,6 +149,43 @@ reset();
   ok('nothing left to do', r.more === false, JSON.stringify(r));
 }
 
+// --- duplicated archive roots are merged before looking inside --------------
+reset();
+{
+  const e = { CHATS: makeKV(), GOOGLE_CLIENT_ID: 'c', GOOGLE_CLIENT_SECRET: 's',
+    GOOGLE_REFRESH_TOKEN: 'r', DRIVE_ROOT_NAME: 'Документы семьи' };   // no pin
+  const r1 = mkFolder('Документы семьи', 'root', '2026-01-01T00:00:00Z');
+  const r2 = mkFolder('Документы семьи', 'root', '2026-02-01T00:00:00Z');
+  const catInR1 = mkFolder('анализы', r1, '2026-01-02T00:00:00Z');
+  const catInR2 = mkFolder('анализы', r2, '2026-02-02T00:00:00Z');
+  const stranded = mkFile('в дубле.pdf', catInR2);
+
+  const r = await W.repairArchive(e, 100);
+  eq('one archive root survives', live().filter(f => f.name === 'Документы семьи').length, 1);
+  eq('and it is the older one', live().find(f => f.name === 'Документы семьи').id, r1);
+  eq('its «анализы» folders merged too', live().filter(f => f.name === 'анализы').length, 1);
+  ok('and the file stranded in the twin came across',
+     kidsOf(catInR1).map(f => f.id).includes(stranded),
+     JSON.stringify(kidsOf(catInR1).map(f => f.name)));
+  ok('reported', r.merged.length >= 2, JSON.stringify(r.merged));
+}
+
+// --- a pinned root is trusted, not deduped ----------------------------------
+reset();
+{
+  const e = { CHATS: makeKV(), GOOGLE_CLIENT_ID: 'c', GOOGLE_CLIENT_SECRET: 's',
+    GOOGLE_REFRESH_TOKEN: 'r', DRIVE_ROOT_ID: 'PINNED' };
+  mkFolder('Документы семьи', 'root', '2026-01-01T00:00:00Z');
+  mkFolder('Документы семьи', 'root', '2026-02-01T00:00:00Z');
+  const a = mkFolder('счета', 'PINNED', '2026-01-01T00:00:00Z');
+  mkFolder('счета', 'PINNED', '2026-02-01T00:00:00Z');
+  await W.repairArchive(e, 100);
+  eq('inside the pinned folder it still merges', live().filter(f => f.name === 'счета').length, 1);
+  eq('and the keeper is the oldest', live().find(f => f.name === 'счета').id, a);
+  eq('folders outside it are not touched',
+     live().filter(f => f.name === 'Документы семьи').length, 2);
+}
+
 // --- a clean archive is left alone ------------------------------------------
 reset();
 {

@@ -358,6 +358,14 @@ Other fixes over the draft:
   which makes Telegram reject the whole message with a 400 — the bot would
   appear to go silent. `say()` retries once as plain text.
 - **Messages over 4096 chars** are clipped instead of being rejected outright.
+- **Await every reply, including the one that ends a branch.** `return void
+  say(...)` orphans the promise: `handleUpdate` resolves, the `ctx.waitUntil`
+  wrapping it settles, and the runtime is free to cancel the in-flight
+  `sendMessage`. Short commands win that race often enough to look correct.
+  `/docs fix` did not — after half a minute of Drive calls the repair ran, logged
+  what it had done, and the answer never left the Worker. `test/replies.test.mjs`
+  holds every send open until the turn resolves, so a new command that forgets
+  the `await` fails there rather than in the chat.
 - **Group commands.** `/rules@botname` is what Telegram actually delivers in a
   group; commands are now matched on the stripped first token.
 - **`transcribe()` guards `getFile`** instead of destructuring `undefined`, and

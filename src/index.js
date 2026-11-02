@@ -64,21 +64,30 @@ export default {
 
   // Two cron jobs share this handler; event.cron says which one fired.
   //
-  //   */5 * * * *          -> dueSoonAlerts: high-priority tasks about to start
+  //   */5 * * * *          -> dueSoonAlerts, and weekendIdeas on Thursdays
   //   30 5 / 30 6 * * *    -> morningDigest: the day's plan
   //
   // Cloudflare schedules in UTC only, so both the summer and winter UTC
   // equivalents of DIGEST_AT are registered and morningDigest() decides which
   // one is actually 07:30 in Madrid today.
+  //
+  // The weekend post rides the 5-minute sweep instead of owning a Thursday
+  // pair of its own. Cloudflare caps a free account at five cron triggers;
+  // asking for a sixth and seventh got them registered nowhere, silently, and
+  // the Thursday message never went out at all. Nothing here needs its own
+  // trigger anyway: weekendIdeas() already refuses unless it is locally
+  // Thursday inside a 30-minute window after WEEKEND_AT, and claims a KV day
+  // key before posting — so of the six sweeps that fall in that window, the
+  // first sends and the rest return immediately.
   async scheduled(event, env, ctx) {
     const cron = event.cron || '';
-    // Day-of-week 4 is the Thursday pair; */5 is the alert sweep; the rest is
-    // the morning digest's summer/winter pair.
+    // */5 is the sweep; anything else is the morning digest's summer/winter pair.
     const job = cron.startsWith('*/5')
-      ? dueSoonAlerts(env).catch(err => console.error('alerts', err.stack))
-      : cron.endsWith(' 4')
-        ? weekendIdeas(env).catch(err => console.error('weekend', err.stack))
-        : morningDigest(env).catch(err => console.error('digest', err.stack));
+      ? Promise.all([
+        dueSoonAlerts(env).catch(err => console.error('alerts', err.stack)),
+        weekendIdeas(env).catch(err => console.error('weekend', err.stack)),
+      ])
+      : morningDigest(env).catch(err => console.error('digest', err.stack));
     ctx.waitUntil(job);
   },
 };

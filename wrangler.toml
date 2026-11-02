@@ -60,11 +60,15 @@ id      = "REPLACE_ME"
 # Cloudflare cron is UTC-only. 05:30 UTC = 07:30 CEST (summer),
 # 06:30 UTC = 07:30 CET (winter). The handler checks local time and the
 # off-season firing returns immediately, so exactly one digest goes out.
-# The */5 entry drives dueSoonAlerts instead; scheduled() dispatches on event.cron.
+# The */5 entry carries dueSoonAlerts and the Thursday weekendIdeas post;
+# scheduled() dispatches on event.cron.
+#
+# Three entries, and it has to stay that way: a free account gets five cron
+# triggers in total. A Thursday-evening pair for weekendIdeas was tried here and
+# never registered — no error, just no Thursday message — so that job now rides
+# the */5 sweep and guards itself on the local clock. See scheduled().
 [triggers]
-# 16:00 UTC = 18:00 CEST, 17:00 UTC = 18:00 CET — the Thursday pair for
-# weekendIdeas, which checks the local clock and lets exactly one through.
-crons = ["30 5 * * *", "30 6 * * *", "*/5 * * * *", "0 16 * * 4", "0 17 * * 4"]
+crons = ["30 5 * * *", "30 6 * * *", "*/5 * * * *"]
 
 # src/app.html is the Mini App page; this rule bundles it in as a string.
 [[rules]]

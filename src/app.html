@@ -53,6 +53,15 @@
   :root[data-scheme="dark"] { --mark-a: .26; --mark-b: .55; }
   :root[data-scheme="light"] { --mark-a: .18; --mark-b: .45; }
 
+  /* Weekends are derived from the date, never stored: they are every Saturday
+     and Sunday for as long as the calendar runs, which no list in KV should
+     have to carry. A quieter alpha than a mark's, so a school-off day stays
+     the louder fact on a cell that is both. */
+  :root { --wknd-rgb: 217,84,143; --wknd-a: .10; }
+  @media (prefers-color-scheme: dark) { :root { --wknd-rgb: 244,143,177; --wknd-a: .17; } }
+  :root[data-scheme="dark"]  { --wknd-rgb: 244,143,177; --wknd-a: .17; }
+  :root[data-scheme="light"] { --wknd-rgb: 217,84,143; --wknd-a: .10; }
+
   /* Every shaded thing carries both hexes inline and picks one here, so the
      choice is CSS's — that is what keeps it correct after a live theme flip. */
   .mk { --mrgb: var(--mark-rgb); --mc: var(--mark); }
@@ -121,6 +130,7 @@
   /* --- month grid --- */
   .dow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 2px; }
   .dow div { text-align: center; font-size: 11px; color: var(--hint); padding: 2px 0; }
+  .dow div.wknd { color: rgb(var(--wknd-rgb)); }
   .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
   .cell {
     aspect-ratio: 1 / 1; border: 0; border-radius: 9px; padding: 3px 0 0;
@@ -136,6 +146,9 @@
     background: rgba(var(--mrgb), var(--mark-a));
     box-shadow: inset 0 0 0 1px rgba(var(--mrgb), var(--mark-b));
   }
+  /* No ring here, unlike a mark: the tint alone. A weekend that also carries a
+     mark keeps the mark's colour — the renderer leaves this class off then. */
+  .cell.wknd { background: rgba(var(--wknd-rgb), var(--wknd-a)); }
   .cell.dim { color: var(--hint); }
   .cell.today { outline: 2px solid var(--accent); outline-offset: -2px; font-weight: 700; }
   .cell[aria-pressed="true"] { background: var(--accent); color: var(--onaccent); }
@@ -167,6 +180,8 @@
   .legend i { width: 11px; height: 11px; border-radius: 4px; display: block;
               background: rgba(var(--mrgb), var(--mark-a));
               box-shadow: inset 0 0 0 1px rgba(var(--mrgb), var(--mark-b)); }
+  .legend i.wknd { background: rgba(var(--wknd-rgb), var(--wknd-a));
+                   box-shadow: inset 0 0 0 1px rgba(var(--wknd-rgb), .45); }
 
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   li.task {
@@ -351,6 +366,7 @@
       var mark = markOn(day);
       var cls = 'cell';
       if (mark) cls += ' marked mk';
+      else if (dowMon(day) >= 5) cls += ' wknd';
       if (day === state.data.today) cls += ' today';
       if (day < state.data.today) cls += ' dim';
       var dots = items.slice(0, 4).map(function (t) {
@@ -375,7 +391,9 @@
         + listHtml(tasksOn(sel), 'Ничего не запланировано.')
       : '<div class="empty">Выбери день, чтобы посмотреть задачи.</div>';
 
-    return '<div class="dow">' + DOW.map(function (w) { return '<div>' + w + '</div>'; }).join('')
+    return '<div class="dow">' + DOW.map(function (w, i) {
+      return '<div' + (i >= 5 ? ' class="wknd"' : '') + '>' + w + '</div>';
+    }).join('')
       + '</div><div class="grid">' + cells.join('') + '</div>' + legendHtml() + below;
   }
 
@@ -384,16 +402,20 @@
     return '<span class="chip mk" style="' + paintMark(mark) + '">' + esc(markLabel(mark)) + '</span>';
   }
 
-  /** Only the kinds actually shaded somewhere, so an unused colour never appears. */
+  /**
+   * Weekends come first and always: they fall in every month, so that colour
+   * never goes unexplained. After them, only the mark kinds actually shaded
+   * somewhere, so an unused colour never appears.
+   */
   function legendHtml() {
     var seen = {};
     Object.keys(state.markByDate).forEach(function (d) { seen[state.markByDate[d].kind] = true; });
-    var kinds = Object.keys(seen);
-    if (!kinds.length) return '';
-    return '<div class="legend">' + kinds.map(function (k) {
+    var out = ['<span><i class="wknd"></i>Выходные</span>'];
+    Object.keys(seen).forEach(function (k) {
       var m = { kind: k };
-      return '<span class="mk" style="' + paintMark(m) + '"><i></i>' + esc(kindOf(m).label) + '</span>';
-    }).join('') + '</div>';
+      out.push('<span class="mk" style="' + paintMark(m) + '"><i></i>' + esc(kindOf(m).label) + '</span>');
+    });
+    return '<div class="legend">' + out.join('') + '</div>';
   }
 
   function weekList() {

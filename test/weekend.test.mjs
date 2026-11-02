@@ -102,19 +102,50 @@ await W.weekendIdeas(env(), {});   // scheduled path, not Thursday
 eq('the scheduled job stays silent instead', sent.length, 0);
 
 // ------------------------------------------------------- the time guards ----
-// These run on a real clock, so assert the guard's behaviour, not a fixed day.
+// These run on a real clock, so the guards are driven by moving WEEKEND_AT to
+// where the clock already is, rather than by waiting for a particular day. The
+// earlier version asserted `true` on a Thursday and skipped on the window guard
+// when it meant to be testing the day key, so it proved nothing on either path.
 const isThursday = new Date(`${today}T12:00:00Z`).getUTCDay() === 4;
-tasks = [{ id: '1', content: 'идея', labels: ['выходные'] }];
-sent.length = 0;
-await W.weekendIdeas(env({ WEEKEND_AT: '00:00' }), {});
-ok('outside the 30-minute window nothing is sent',
-   isThursday ? true : sent.length === 0, 'sent on a non-Thursday');
+const nowHHMM = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date());
 
-// The day key stops the second cron firing of the same Thursday.
+tasks = [{ id: '1', content: 'идея', labels: ['выходные'] }];
+
+// Far from WEEKEND_AT: silent whatever day it is. 12 hours away in both
+// directions, so neither branch of the drift check can be inside the window.
+for (const at of ['00:00', '12:00']) {
+  sent.length = 0;
+  await W.weekendIdeas(env({ WEEKEND_AT: at }), {});
+  const drift = Math.abs(Number(nowHHMM.slice(0, 2)) - Number(at.slice(0, 2)));
+  if (drift >= 1) eq(`outside the window nothing is sent (WEEKEND_AT ${at})`, sent.length, 0);
+}
+
+// Now put WEEKEND_AT exactly on the current local clock, which puts us inside
+// the window. On a Thursday that is the live configuration: it must send once,
+// and the day key must stop every later sweep of the same day. Six sweeps fall
+// in a 30-minute window now that the job rides the 5-minute sweep, so this is
+// the guard that keeps it to one message.
 {
-  const e = env();
-  const stamp = `weekend:${new Date().toISOString().slice(0, 10)}`;
-  await e.CHATS.put(stamp, '1');
+  const e = env({ WEEKEND_AT: nowHHMM });
+  sent.length = 0;
+  await W.weekendIdeas(e, {});
+  eq(`inside the window it sends${isThursday ? '' : ' (skipped: not Thursday)'}`,
+     sent.length, isThursday ? 1 : 0);
+
+  await W.weekendIdeas(e, {});
+  eq('and the day key stops the next sweep', sent.length, isThursday ? 1 : 0);
+
+  if (isThursday) {
+    ok('the day key was actually what stopped it',
+       (await e.CHATS.get(`weekend:${today}`)) === '1', 'no day key written');
+  }
+}
+
+// A key already in place keeps the first sweep quiet too.
+{
+  const e = env({ WEEKEND_AT: nowHHMM });
+  await e.CHATS.put(`weekend:${today}`, '1');
   sent.length = 0;
   await W.weekendIdeas(e, {});
   eq('a day already sent is not sent again', sent.length, 0);

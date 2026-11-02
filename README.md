@@ -778,19 +778,31 @@ the one, and writes the set back.
 | 💡 Можно сделать | labelled and **undated** — the ideas, shuffled, `WEEKEND_COUNT` of them |
 | — | labelled but dated to some other day: left out, it is scheduled elsewhere |
 
-Shuffled for the same reason the morning nudge is: a fixed order surfaces the
+Shuffled, not oldest-first: a fixed order surfaces the
 same stale idea every Thursday until someone gives in, and the family learns to
 skim past it.
 
 ### Firing exactly once
 
-Cloudflare cron is UTC-only, so both `0 16 * * 4` and `0 17 * * 4` are
-registered — 18:00 in Madrid in summer and in winter. The handler checks that it
-is still Thursday *locally*, that the local clock is inside a 30-minute window,
-and takes a KV day key, so the off-season firing returns immediately and exactly
-one message goes out. `/weekend` skips all three, and unlike the scheduled run
-it answers even when nothing is marked — a command that replies with silence
-looks broken.
+There is no cron trigger of its own for this. The post rides the `*/5 * * * *`
+sweep that already drives the due-soon alerts, and `weekendIdeas()` decides for
+itself whether this is the moment: it checks that it is Thursday *locally*, that
+the local clock is inside a 30-minute window after `WEEKEND_AT`, and it claims a
+KV day key before posting. Six sweeps fall inside that window; the first one
+sends and the rest return immediately.
+
+It was built the other way first — `0 16 * * 4` and `0 17 * * 4`, the summer and
+winter UTC equivalents of 18:00 in Madrid, on the theory that the guards would
+let exactly one through. Those two triggers were never registered. A free
+Cloudflare account gets five cron triggers in total, this Worker already used
+three, and the pair that would have taken it to five went in without an error
+and without taking effect — `wrangler deploy` reported success, the code shipped,
+the tasks were labelled, and no Thursday message ever went out. Nothing in the
+logs said so either: the absence of a cron event leaves no trace. Keep
+`[triggers]` at three entries.
+
+`/weekend` skips all three guards, and unlike the scheduled run it answers even
+when nothing is marked — a command that replies with silence looks broken.
 
 ---
 

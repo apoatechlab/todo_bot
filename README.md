@@ -294,6 +294,7 @@ Editing, by voice or text:
 - `/school` — list the shaded calendar days; `/school reset` clears them (§10)
 - `/docs` — what is in the document archive; `/docs fix` merges duplicate folders (§12.5)
 - `/weekend` — weekend ideas now, rather than waiting for Thursday (§11)
+- `/maybe` — five random undated tasks, as candidates for today; never sent on its own
 
 With `DELETE_REQUESTS = "true"`, the message that produced a task is **removed
 once the task exists** — the chat keeps the bot's confirmation instead of a
@@ -436,6 +437,28 @@ no `url` field (REST v2 did), so links are built as
 `https://app.todoist.com/app/task/<id>`.
 
 ---
+
+
+### Undated tasks on request: `/maybe`
+
+```
+💡 Без срока — может, сегодня?
+• починить кран
+• заточка ножей
+• купить булгур
+
+Ещё 2 без срока.
+
+Скажи «починить кран — сегодня», и поставлю срок.
+```
+
+Five tasks with **no due date at all**, picked at random. This used to follow
+the digest every morning; the family preferred to ask for it, so now it only
+comes when asked. Random rather than oldest-first, or the same stale tasks
+would lead every time, and drawn with `crypto.getRandomValues()` because
+`Math.random()` in a cold isolate replays the same sequence. The last few
+rounds' ids are kept in KV under `suggest:recent` and skipped while the pool
+has alternatives, so asking again gives a different set.
 
 ## 8. Due-soon alerts
 

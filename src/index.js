@@ -149,6 +149,7 @@ async function handleUpdate(update, env) {
       'Пиши или наговаривай: «купить молоко завтра», «перенеси дантиста на пятницу», «садик — сделано», «что на сегодня?»\n\n' +
       'Напоминания: «напомни завтра в 18:00 забрать посылку» или «это важно» — подниму приоритет и пришлю сюда сигнал за 5 минут.\n\n' +
       '/digest — прислать утренний дайджест прямо сейчас.\n' +
+      '/maybe — что без срока можно сделать сегодня.\n' +
       '/weekend — идеи на выходные; сами приходят по четвергам.\n' +
       '/school — дни без школы, закрашенные в календаре.\n' +
       '/docs — архив документов; кинь файл или фото, и он туда попадёт.\n' +
@@ -163,6 +164,10 @@ async function handleUpdate(update, env) {
   if (cmd === '/reset') {
     await env.CHATS.delete(`hist:${chatId}`);
     return void await say(env, chatId, 'Контекст очищен.');
+  }
+  if (cmd === '/maybe') {
+    await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
+    return void await suggestUndated(env, chatId);
   }
   if (cmd === '/weekend') {
     await tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' });
@@ -1902,6 +1907,8 @@ async function transcribe(env, fileId) {
 
 // ========================================================= morning digest ===
 const TD_APP = 'https://app.todoist.com/app';
+/** KV key holding the ids the last few /maybe rounds already suggested. */
+const RECENT_KEY = 'suggest:recent';
 
 /** Local wall-clock parts in `tz`, as the family experiences them. */
 function localParts(tz, at = new Date()) {
@@ -2001,8 +2008,8 @@ async function morningDigest(env, { force = false, chatId: to = null } = {}) {
  * Fisher-Yates over a copy, drawing from Web Crypto rather than Math.random().
  *
  * A cron firing usually gets a cold isolate, and Math.random() there replayed
- * the same sequence every firing — so a random pick kept naming the same
- * tasks. crypto.getRandomValues() is properly seeded per call.
+ * the same sequence every firing — so the «может, сегодня?» list kept naming
+ * the same two tasks. crypto.getRandomValues() is properly seeded per call.
  */
 function shuffled(items) {
   const out = items.slice();
@@ -2013,6 +2020,52 @@ function shuffled(items) {
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
+}
+
+/**
+ * /maybe: a few tasks that have no due date at all, chosen at random, offered
+ * as candidates for today. On demand only — it used to follow the digest every
+ * morning, and the family preferred to ask for it.
+ *
+ * Random rather than oldest-first on purpose — a fixed order would surface the
+ * same stale tasks every morning until someone finally did them, and the family
+ * would learn to skim past the message. Recently suggested ids are remembered
+ * for a few days on top of that, so asking twice does not hand back the same pick.
+ */
+async function suggestUndated(env, chatId, n = 5) {
+  const [all, people] = await Promise.all([listTasks(env), roster(env)]);
+  const nameOf = Object.fromEntries(people.map(p => [p.id, p.name.split(' ')[0]]));
+
+  const pool = all.filter(t => !t.due?.date);
+  // A command that answers with silence looks broken.
+  if (!pool.length) return void await say(env, chatId, 'Задач без срока нет — всё расписано.');
+
+  // Prefer tasks the last few rounds have not already offered; fall back to
+  // the whole pile once the cooldown list has eaten most of it.
+  const recent = (await env.CHATS.get(RECENT_KEY, 'json')) || [];
+  const unseen = pool.filter(t => !recent.includes(String(t.id)));
+  const picks = shuffled(unseen.length >= n ? unseen : pool).slice(0, n);
+
+  const lines = picks.map(t => {
+    const who = t.responsible_uid ? nameOf[String(t.responsible_uid)] : null;
+    return `\u2022 <a href="${TD_APP}/task/${t.id}">${escapeHtml(t.content)}</a>`
+      + (who ? ` \u00b7 ${escapeHtml(who)}` : '');
+  });
+
+  const rest = pool.length - lines.length;
+  const tail = rest > 0 ? `\n\n<i>\u0415\u0449\u0451 ${rest} \u0431\u0435\u0437 \u0441\u0440\u043e\u043a\u0430.</i>` : '';
+
+  await say(env, chatId,
+    `\ud83d\udca1 <b>\u0411\u0435\u0437 \u0441\u0440\u043e\u043a\u0430 \u2014 \u043c\u043e\u0436\u0435\u0442, \u0441\u0435\u0433\u043e\u0434\u043d\u044f?</b>\n${lines.join('\n')}${tail}\n\n`
+    + `<i>\u0421\u043a\u0430\u0436\u0438 \u00ab${escapeHtml(picks[0].content)} \u2014 \u0441\u0435\u0433\u043e\u0434\u043d\u044f\u00bb, \u0438 \u043f\u043e\u0441\u0442\u0430\u0432\u043b\u044e \u0441\u0440\u043e\u043a.</i>`,
+    { parse_mode: 'HTML', disable_web_page_preview: true });
+
+  // Keep a few rounds of history, but never more than the pool can spare.
+  const keep = Math.min(n * 3, Math.max(0, pool.length - n));
+  const memo = [...picks.map(t => String(t.id)), ...recent].slice(0, keep);
+  await env.CHATS.put(RECENT_KEY, JSON.stringify(memo), { expirationTtl: 1209600 });
+
+  console.log(`suggest: sent ${lines.length} of ${pool.length} undated, ${recent.length} on cooldown`);
 }
 
 // =============================================================== mini app ===

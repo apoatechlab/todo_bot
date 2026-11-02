@@ -22,7 +22,6 @@ CLAUDE_EFFORT      = "low"                 # low | medium | high | xhigh | max
 DIGEST_CHAT_ID     = "REPLACE_ME"          # where the digest is posted
 DIGEST_AT          = "07:30"               # local time in TZ_NAME
 DIGEST_SKIP_EMPTY  = "true"                # "false" = post even with nothing due
-SUGGEST_COUNT      = "5"                   # undated tasks suggested after the digest; 0 = off
 
 # Mini App: the calendar behind the digest button. Create it once with
 # BotFather /newapp (Web App URL = https://<worker-host>/app), then put the bot

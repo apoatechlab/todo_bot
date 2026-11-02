@@ -403,8 +403,7 @@ project link at the bottom.
 |---|---|---|
 | `DIGEST_CHAT_ID` | `REPLACE_ME` | where to post; falls back to the first allowlisted chat |
 | `DIGEST_AT` | `07:30` | local time in `TZ_NAME` |
-| `DIGEST_SKIP_EMPTY` | `true` | `false` posts "ничего не запланировано" instead of staying quiet |
-| `SUGGEST_COUNT` | `5` | undated tasks offered in the follow-up; `0` disables it |
+| `DIGEST_SKIP_EMPTY` | `true` | `false` posts "ничего не запланировано" instead of staying quiet; ignored while the calendar button is configured |
 
 **Why two cron triggers.** Cloudflare cron expressions are UTC-only with no
 timezone support, so `wrangler.toml` registers **both** `30 5 * * *` and
@@ -427,42 +426,6 @@ only to stop the schedule firing twice, so a hand-run skips them, and skips
 *writing* the day key too: otherwise testing at 07:00 would swallow the real
 digest half an hour later. A hand-run also ignores `DIGEST_SKIP_EMPTY`, since a
 command that answers with silence looks broken.
-
-### Second message: undated nudge
-
-Straight after the digest the Worker sends a follow-up offering
-`SUGGEST_COUNT` (default 5) tasks that have **no due date at all**, picked at
-random, as candidates for today:
-
-```
-💡 Без срока — может, сегодня?
-• починить кран
-• сходить в санте джелато
-• заточка ножей
-• найти гладильную доску
-• купить булгур
-
-Ещё 2 без срока.
-
-Скажи «починить кран — сегодня», и поставлю срок.
-```
-
-**Random, not oldest-first.** A fixed order would surface the same stale tasks
-every morning until somebody finally did them, and the family would learn to
-skim past the message.
-
-**Randomness comes from `crypto.getRandomValues()`, not `Math.random()`.** A
-cron firing usually lands on a cold isolate, where `Math.random()` replayed the
-same sequence every morning — so the nudge kept naming the same two tasks. On
-top of that, the ids of the last few rounds are kept in KV under
-`suggest:recent` and skipped while the pool still has enough alternatives, so
-chance alone cannot hand back yesterday's pair.
-
-**It sends even on a quiet morning.** A day with nothing scheduled is exactly
-when picking something off the undated pile is worth suggesting, so this
-follow-up runs regardless of whether the digest itself had anything to report —
-including when `DIGEST_SKIP_EMPTY` suppressed the digest entirely. If there are
-no undated tasks, it stays silent. `SUGGEST_COUNT = "0"` turns it off.
 
 **Formatting is HTML, not Markdown.** Task titles routinely contain `_ * [ ]`,
 which would break Markdown links; HTML needs only `& < >` escaped, which is
@@ -582,9 +545,10 @@ The cost is one-time BotFather setup (§9.2). If `BOT_USERNAME` or
 `MINIAPP_SHORT_NAME` is missing or still `REPLACE_ME`, the button is simply left
 off the digest — a placeholder button would look real and 404 on tap.
 
-The button rides on the digest. On a morning where the digest stayed silent
-(`DIGEST_SKIP_EMPTY`), the undated nudge carries it instead, so there is exactly
-one button per morning and never zero.
+The button rides on the digest. So that there is exactly one button every
+morning and never zero, a quiet morning still posts the short "ничего не
+запланировано" line whenever the button is configured — `DIGEST_SKIP_EMPTY`
+only keeps the digest silent when there is no button to carry.
 
 ### 9.1 Routes and authorisation
 
@@ -669,9 +633,9 @@ painted amber: the days Maya's school is shut when it normally would not be.
 They are not tasks. They cannot be completed, have no assignee or priority, and
 arrive in blocks — Christmas is one fortnight, which would be fourteen Todoist
 rows. Worse, every one of them would show up in the morning digest as something
-to do, the undated nudge could offer them, and an accidental «сделано» would
+to do, and an accidental «сделано» would
 erase the fact. Keeping them out of the project means none of the existing
-paths — digest, nudge, due-soon alerts — need to learn about them at all.
+paths — digest, due-soon alerts — need to learn about them at all.
 
 ### Storage
 

@@ -645,8 +645,8 @@ A page for a tablet that hangs on the wall and is read from across the room: a
 large clock in the family's zone, the date, a «Нет школы» pill on marked days,
 today's tasks in clock order (timed first, then the rest), up to three overdue
 ones, and a one-line peek at tomorrow. Dark, so it is not a lamp in the
-evening; between 23:00 and 06:30 the lists step back and only a dimmed clock
-stays. Tasks whose time has passed dim as the day goes, and when a day has more
+evening; between 23:00 and 06:30 the whole page dims, lists included, but
+stays readable. Tasks whose time has passed dim as the day goes, and when a day has more
 than fits, the passed ones leave first and the rest is counted as «и ещё N».
 
 ```

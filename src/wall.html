@@ -121,9 +121,9 @@
     background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 2.6vmin; cursor: pointer;
   }
 
-  /* Night: the clock stays, quietly; the lists step back until morning. */
-  body.night .wall { opacity: .32; }
-  body.night .tasks { visibility: hidden; }
+  /* Night: the whole wall dims so it is not a lamp in the hallway, but stays
+     readable — a list that vanished at 23:00 looked like the page had broken. */
+  body.night .wall { opacity: .45; }
 </style>
 </head>
 <body>

@@ -81,5 +81,16 @@ type   = "Data"
 globs  = ["**/*.png"]
 fallthrough = false
 
+# Live updates for the wall display: one object holds every tablet's socket,
+# and the bot nudges it after each change. SQLite-backed, so it is on the
+# free plan.
+[[durable_objects.bindings]]
+name       = "WALL"
+class_name = "WallHub"
+
+[[migrations]]
+tag                = "v1"
+new_sqlite_classes = ["WallHub"]
+
 [observability]
 enabled = true

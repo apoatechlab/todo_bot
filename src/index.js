@@ -54,6 +54,7 @@ export default {
       });
     }
     if (path === '/api/wall') return apiWall(request, env);
+    if (path === '/api/wall/live') return wallLive(request, env);
     // What makes "Add to Home screen" on Android an app that opens full screen
     // instead of a bookmark into a browser tab. No key in start_url: the page
     // keeps it in localStorage, and the manifest is public.
@@ -1802,6 +1803,7 @@ async function converse(env, chatId, userTurn) {
     }
 
     const results = [];
+    let changed = false;
     for (const block of res.content.filter(b => b.type === 'tool_use')) {
       let out;
       try { out = await runTool(env, block.name, block.input); }
@@ -1813,8 +1815,10 @@ async function converse(env, chatId, userTurn) {
       if (out?.ok && out.task?.id && (block.name === 'add_task' || block.name === 'update_task')) {
         touched.set(String(out.task.id), out.task.content);
       }
+      if (out && !out.error && WALL_TOOLS.has(block.name)) changed = true;
       results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(out) });
     }
+    if (changed) await notifyWall(env);
     // All results for one assistant turn go back in a SINGLE user message.
     messages.push({ role: 'user', content: results });
   }
@@ -2309,6 +2313,64 @@ async function apiWall(request, env) {
     tasks: on(today),
     tomorrow: on(tomorrow),
   });
+}
+
+/** Tools whose success changes what the wall shows. */
+const WALL_TOOLS = new Set([
+  'add_task', 'update_task', 'complete_task', 'delete_task', 'add_day_marks', 'remove_day_mark',
+]);
+
+/**
+ * Live link for the wall: a WebSocket held open by WallHub. The page refetches
+ * /api/wall when told to, so a task added from the chat shows up in a second
+ * rather than on the next minute's poll. The poll stays as the backstop for
+ * edits made in Todoist itself, which the bot never hears about.
+ */
+async function wallLive(request, env) {
+  const key = new URL(request.url).searchParams.get('k') || '';
+  if (!env.WALL_KEY || !sameSecret(key, env.WALL_KEY)) return new Response('forbidden', { status: 403 });
+  if (request.headers.get('Upgrade') !== 'websocket') return new Response('expected websocket', { status: 426 });
+  if (!env.WALL) return new Response('no WALL binding', { status: 503 });
+  return env.WALL.get(env.WALL.idFromName('wall')).fetch(request);
+}
+
+/** Tell every open wall to refetch. Best effort: a missed nudge costs a minute. */
+async function notifyWall(env) {
+  if (!env.WALL) return;
+  try {
+    await env.WALL.get(env.WALL.idFromName('wall')).fetch('https://wall/changed', { method: 'POST' });
+  } catch (e) {
+    console.warn('wall notify', e.message);
+  }
+}
+
+/**
+ * One instance, named "wall", holding every tablet's socket. Hibernatable
+ * sockets: an idle wall costs nothing between nudges, and keep-alive pings are
+ * answered by the runtime without waking the object at all.
+ */
+export class WallHub {
+  constructor(state) {
+    this.state = state;
+    state.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
+  }
+
+  async fetch(request) {
+    if (request.headers.get('Upgrade') === 'websocket') {
+      const [client, server] = Object.values(new WebSocketPair());
+      this.state.acceptWebSocket(server);
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    const sockets = this.state.getWebSockets();
+    for (const ws of sockets) {
+      try { ws.send('changed'); } catch { /* closing; the page reconnects */ }
+    }
+    return new Response(String(sockets.length));
+  }
+
+  async webSocketClose(ws, code) {
+    try { ws.close(code, 'closing'); } catch { /* already closed */ }
+  }
 }
 
 // ========================================================== weekend ideas ===

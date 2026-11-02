@@ -143,7 +143,7 @@
 (function () {
   'use strict';
 
-  var REFRESH_MS = 60 * 1000;
+  var REFRESH_MS = 60 * 1000;   // backstop; the bot's changes arrive over the socket
   var NIGHT_FROM = 23 * 60, NIGHT_TO = 6 * 60 + 30;   // local minutes
 
   var $ = function (id) { return document.getElementById(id); };
@@ -314,6 +314,39 @@
     }
   }
 
+  /* ------------------------------------------------------------- live --- */
+  // The bot says "changed" down this socket the moment a task is added or done
+  // from the chat. Phones and tablets drop idle sockets without a word, so a
+  // ping goes up every 30 s, and a dead socket is replaced with growing pauses.
+  var sock = null, retry = 1000, pinger = null, nudge = null, again = null;
+  function live() {
+    clearTimeout(again);
+    if (sock || !key || !('WebSocket' in window)) return;
+    var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host
+      + '/api/wall/live?k=' + encodeURIComponent(key);
+    try { sock = new WebSocket(url); } catch (e) { return later(); }
+    sock.onopen = function () {
+      retry = 1000;
+      // Anything that changed while we were disconnected.
+      load();
+      clearInterval(pinger);
+      pinger = setInterval(function () { try { sock.send('ping'); } catch (e) {} }, 30000);
+    };
+    sock.onmessage = function (e) {
+      if (e.data !== 'changed') return;
+      // One chat turn can change several tasks; one refetch covers them all.
+      clearTimeout(nudge);
+      nudge = setTimeout(load, 400);
+    };
+    sock.onclose = function () { clearInterval(pinger); sock = null; later(); };
+    sock.onerror = function () { try { sock.close(); } catch (e) {} };
+  }
+  function later() {
+    clearTimeout(again);
+    again = setTimeout(live, retry);
+    retry = Math.min(retry * 2, 60000);
+  }
+
   /* ------------------------------------------------------------- wake --- */
   // A wall display that sleeps after two minutes is a black rectangle.
   var lock = null;
@@ -337,7 +370,7 @@
   }
   document.addEventListener('click', function () { wake(); fullscreen(); });
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible') { if (!lock) wake(); load(); }
+    if (document.visibilityState === 'visible') { if (!lock) wake(); if (!sock) live(); load(); }
   });
 
   window.addEventListener('resize', function () { if (state.data) render(); });
@@ -345,6 +378,7 @@
   tick();
   drift();
   load();
+  live();
   wake();
   setInterval(tick, 5000);
   setInterval(load, REFRESH_MS);

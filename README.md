@@ -672,9 +672,25 @@ already has it in `localStorage` from the first visit with `?k=`.
 **Keeping it on.** The page holds a Screen Wake Lock; a browser that only grants
 one after a tap shows «Коснитесь, чтобы экран не гас» until tapped. Also turn
 off auto-lock on the tablet itself, and on an iPad use Guided Access (or "Add to
-Home Screen" for a full-screen icon). Data refreshes every minute; after three
-failed refreshes a small «нет связи» appears and the last list stays up. Once
-an hour the layout shifts by a few pixels so nothing sits on one spot for months.
+Home Screen" for a full-screen icon). After three failed refreshes a small «нет связи» appears and the last list
+stays up. Once an hour the layout shifts by a few pixels so nothing sits on one
+spot for months.
+
+**Live updates.** The page holds a WebSocket to `/api/wall/live` (same key),
+which lands in one Durable Object, `WallHub`. Whenever a chat turn runs a tool
+that changes what the wall shows — `add_task`, `update_task`, `complete_task`,
+`delete_task`, `add_day_marks`, `remove_day_mark` — the bot pokes the hub, the
+hub says `changed` to every socket, and the page refetches `/api/wall`. A task
+said into the chat is on the wall about a second later.
+
+Edits made in the Todoist app itself never pass through the bot, so the page
+also polls every minute as a backstop. The sockets use the hibernation API:
+an idle wall costs nothing, and the page's 30-second `ping` is answered by the
+runtime without waking the object. A dropped socket reconnects with a backoff
+up to a minute and refetches on reconnect, so nothing missed while offline
+stays missed. The hub is SQLite-backed, which keeps it on the free plan; it
+needs the `[[durable_objects.bindings]]` and `[[migrations]]` blocks in
+`wrangler.toml`.
 
 ---
 

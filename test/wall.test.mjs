@@ -47,4 +47,22 @@ eq('undated left out', [...d.tasks, ...d.overdue, ...d.tomorrow].some(t => t.con
 eq('mark today', d.mark?.label, 'Нет школы');
 eq('mark tomorrow', d.tomorrowMark?.label, 'Нет школы');
 
+// Live link: same key, and only a WebSocket upgrade reaches the hub.
+const live = (k, headers = {}, e = env) =>
+  W.wallLive(new Request(`https://x/api/wall/live?k=${k}`, { headers }), e);
+eq('live: wrong key → 403', (await live('nope', { Upgrade: 'websocket' })).status, 403);
+eq('live: no upgrade → 426', (await live('sesame')).status, 426);
+const hits = [];
+const hub = { idFromName: n => n, get: id => ({ fetch: async r => { hits.push([id, r.url ?? String(r)]); return new Response('1'); } }) };
+eq('live: forwarded to the one hub', (await live('sesame', { Upgrade: 'websocket' }, { ...env, WALL: hub })).status, 200);
+eq('live: hub is "wall"', hits.at(-1)[0], 'wall');
+
+hits.length = 0;
+await W.notifyWall({ ...env, WALL: hub });
+eq('notify pings the hub', hits.map(h => h[1]), ['https://wall/changed']);
+await W.notifyWall(env);   // no binding: a no-op, not a throw
+ok('notify without binding is quiet', true);
+ok('add/complete wake the wall, search does not',
+  W.WALL_TOOLS.has('add_task') && W.WALL_TOOLS.has('complete_task') && !W.WALL_TOOLS.has('search_tasks'));
+
 done();

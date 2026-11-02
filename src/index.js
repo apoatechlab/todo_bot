@@ -1626,11 +1626,55 @@ async function putRules(env, rules) {
   await env.CHATS.put('rules', JSON.stringify(rules));
 }
 
+/** "+01:00" for an offset in ms. */
+function fmtOffset(ms) {
+  const m = Math.round(ms / 60000), a = Math.abs(m);
+  return `${m < 0 ? '-' : '+'}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
+}
+
+/**
+ * First day within `days` (stepping by `dir`) whose offset differs from today's,
+ * as YYYY-MM-DD in `tz`, with the offset it changes to. Null when there is none.
+ */
+function offsetChange(now, tz, dir, days = 200) {
+  const here = tzOffsetMs(now, tz);
+  for (let d = 1; d <= days; d++) {
+    const at = new Date(now.getTime() + dir * d * 864e5);
+    const off = tzOffsetMs(at, tz);
+    if (off !== here) {
+      // Going back, the change happened the day after the first differing one.
+      const day = dir > 0 ? at : new Date(at.getTime() + 864e5);
+      return { date: localParts(tz, day).date, offset: dir > 0 ? off : here };
+    }
+  }
+  return null;
+}
+
+/**
+ * The "Now:" line of the prompt. The bare wall clock used to go in alone, and
+ * after Spain put its clocks back the model went on assuming summer time — it
+ * has no clock of its own and its priors say +02:00. So spell out the offset
+ * and the nearest clock changes on either side.
+ */
+function clockLine(tz, now = new Date()) {
+  const wall = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(now);
+  const off = tzOffsetMs(now, tz);
+  const past = offsetChange(now, tz, -1), next = offsetChange(now, tz, 1);
+  const bits = [`Now: ${wall} local time in ${tz}, UTC${fmtOffset(off)}.`];
+  if (past) bits.push(`The clocks last changed on ${past.date} (to UTC${fmtOffset(past.offset)}, which is in force now).`);
+  if (next) bits.push(`Next change: ${next.date}, to UTC${fmtOffset(next.offset)}.`);
+  bits.push('Every time the family says is this local wall-clock time — never shift it by an offset or convert it to UTC. For «через N часов/минут» count from the time above.');
+  return bits.join(' ');
+}
+
 function systemPrompt(env, tasks, people, hidden, rules, marks, cats, lastDoc) {
   const tz = env.TZ_NAME || 'Europe/Madrid';
   const lead = Number(env.ALERT_LEAD_MIN || 5);
   return `You are the household task assistant for a family. You operate on exactly ONE Todoist project — every task you create goes there automatically, and you cannot touch anything outside it.
-Now: ${new Date().toLocaleString('en-GB', { timeZone: tz })} (${tz}).
+${clockLine(tz)}
 
 How you work (fixed):
 - Turn what the person says into tool calls. Don't ask permission for ordinary adds, postpones or completions — just do them.

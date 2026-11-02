@@ -2283,6 +2283,8 @@ async function apiWall(request, env) {
   const tz = env.TZ_NAME || 'Europe/Madrid';
   const today = localParts(tz).date;
   const tomorrow = shiftDate(today, 1);
+  const dow = new Date(`${today}T12:00:00Z`).getUTCDay();   // 0 = Sunday
+  const monday = shiftDate(today, -((dow + 6) % 7));
   const [all, people, marks] = await Promise.all([listTasks(env), roster(env), getMarks(env)]);
   const nameOf = Object.fromEntries(people.map(p => [p.id, p.name.split(' ')[0]]));
 
@@ -2312,6 +2314,13 @@ async function apiWall(request, env) {
       .sort((a, b) => a.date.localeCompare(b.date)),
     tasks: on(today),
     tomorrow: on(tomorrow),
+    // This week and next, Monday first, for the "ещё на этой неделе" peek and
+    // the swipe-in week view. Recurring tasks appear on their next date only —
+    // that is all Todoist hands out without expanding the rule ourselves.
+    days: Array.from({ length: 14 }, (_, i) => {
+      const d = shiftDate(monday, i);
+      return { date: d, tasks: on(d), mark: label(markOn(d)) };
+    }),
   });
 }
 

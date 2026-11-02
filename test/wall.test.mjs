@@ -46,6 +46,11 @@ eq('tomorrow', d.tomorrow.map(t => t.content), ['собрание']);
 eq('undated left out', [...d.tasks, ...d.overdue, ...d.tomorrow].some(t => t.content === 'кран'), false);
 eq('mark today', d.mark?.label, 'Нет школы');
 eq('mark tomorrow', d.tomorrowMark?.label, 'Нет школы');
+eq('two weeks of days', d.days.length, 14);
+eq('week starts on Monday', new Date(`${d.days[0].date}T12:00:00Z`).getUTCDay(), 1);
+const td = d.days.find(x => x.date === today);
+eq('today inside the days, same order', td.tasks.map(t => t.content), ['почта', 'стоматолог', 'молоко']);
+eq('days carry marks', td.mark?.label, 'Нет школы');
 
 // Live link: same key, and only a WebSocket upgrade reaches the hub.
 const live = (k, headers = {}, e = env) =>

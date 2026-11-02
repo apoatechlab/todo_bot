@@ -653,6 +653,20 @@ than fits, the passed ones leave first and the rest is counted as «и ещё N�
 https://<worker-host>/wall?k=<WALL_KEY>
 ```
 
+**The rest of the week.** Every 20 seconds the task side crossfades to «Ещё на
+этой неделе» — the days after today up to Sunday, grouped by day, empty days
+skipped — for 7 seconds, then back. On Saturday and Sunday there is too little
+week left to bother, so it shows «На следующей неделе» instead; with nothing
+ahead at all, it does not turn.
+
+**Week view.** A horizontal swipe in either direction slides in the whole week,
+Monday to Sunday, from the side the finger came from: seven columns in
+landscape, seven rows in portrait, today outlined, past days dimmed, «Нет школы»
+on its day, and «+N» where a day holds more than fits. Another swipe sends it
+back; untouched for 30 seconds, it goes back by itself. `/api/wall` carries
+`days` — this week and next, Monday first — for both. Recurring tasks appear on
+their next date only, since that is all Todoist returns.
+
 **Authorisation.** The Mini App can ask Telegram who is looking; a wall tablet
 has no Telegram. So the link carries a secret, `WALL_KEY`, compared in constant
 time. The page keeps the key in `localStorage`, so a home-screen icon saved

@@ -1,9 +1,9 @@
 /**
  * Import src/index.js as a plain ES module.
  *
- * The Worker entrypoint imports app.html as a bundler text module and exports
- * only a default handler, neither of which Node can do. This rewrites the one
- * import and appends an export list *derived from the source*, so a test never
+ * The Worker entrypoint imports its HTML pages as bundler text modules and exports
+ * only a default handler, neither of which Node can do. This rewrites those
+ * imports and appends an export list *derived from the source*, so a test never
  * breaks because a hand-kept list went stale.
  */
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
@@ -12,7 +12,8 @@ import { join } from 'node:path';
 
 export async function loadWorker() {
   const src = readFileSync(new URL('../../src/index.js', import.meta.url), 'utf8')
-    .replace("import APP_HTML from './app.html';", "const APP_HTML = '<!doctype html>';");
+    .replace("import APP_HTML from './app.html';", "const APP_HTML = '<!doctype html>';")
+    .replace("import WALL_HTML from './wall.html';", "const WALL_HTML = '<!doctype html>';");
 
   const names = new Set();
   for (const m of src.matchAll(/^(?:async )?function ([A-Za-z_$][\w$]*)\s*\(/gm)) names.add(m[1]);

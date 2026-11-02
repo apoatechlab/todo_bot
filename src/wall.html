@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0c0e">
+<title>Сегодня</title>
+<style>
+  /* A wall display, read from across the hallway. Dark on purpose: a lit white
+     panel is a lamp in the evening, and on OLED black costs nothing. Every size
+     is in vmin so the same page fills a small phone and a 13" tablet alike. */
+  :root {
+    color-scheme: dark;
+    --bg: #0b0c0e;
+    --text: #f2efe9;
+    --muted: #8b8780;
+    --faint: #3a3936;
+    --accent: #e9b872;      /* times — warm, so they read as "when", not "alert" */
+    --late: #e7836b;
+    --font: -apple-system, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); font-family: var(--font);
+    -webkit-font-smoothing: antialiased; overflow: hidden; cursor: none;
+    -webkit-user-select: none; user-select: none;
+  }
+
+  .wall {
+    height: 100%;
+    display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr);
+    gap: 6vmin;
+    padding: calc(6vmin + env(safe-area-inset-top, 0px)) calc(6vmin + env(safe-area-inset-right, 0px))
+             calc(6vmin + env(safe-area-inset-bottom, 0px)) calc(6vmin + env(safe-area-inset-left, 0px));
+    /* A few pixels of drift every hour, so nothing sits on one spot for months. */
+    transform: translate(var(--dx, 0px), var(--dy, 0px));
+    transition: opacity 2s ease, transform 2s ease;
+  }
+  @media (orientation: portrait) {
+    .wall { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); gap: 5vmin; }
+  }
+
+  /* --- clock side --- */
+  .clock { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+  .time {
+    font-size: 25vmin; font-weight: 200; line-height: .9; letter-spacing: -.04em;
+    font-variant-numeric: tabular-nums;
+  }
+  .time .colon { opacity: .55; }
+  .date { margin-top: 3vmin; font-size: 5vmin; font-weight: 400; }
+  .date .dow { display: block; color: var(--muted); font-size: 3.6vmin; margin-bottom: .6vmin; text-transform: lowercase; }
+  .mark {
+    margin-top: 3.5vmin; align-self: flex-start;
+    font-size: 3vmin; padding: 1vmin 2.2vmin; border-radius: 999px;
+    color: var(--mc, var(--accent)); border: .25vmin solid currentColor;
+  }
+  @media (orientation: portrait) {
+    .clock { display: grid; grid-template-columns: auto 1fr; align-items: end; gap: 3vmin 4vmin; }
+    .time { font-size: 22vmin; }
+    .date { margin-top: 0; text-align: right; }
+    .mark { margin-top: 0; justify-self: start; }
+  }
+
+  /* --- tasks side --- */
+  .tasks { display: flex; flex-direction: column; min-height: 0; justify-content: center; }
+  @media (orientation: portrait) { .tasks { justify-content: flex-start; padding-top: 4vmin; } }
+  .head {
+    display: flex; align-items: baseline; gap: 2vmin;
+    font-size: 2.6vmin; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 2.6vmin;
+  }
+  .head .n { color: var(--faint); font-variant-numeric: tabular-nums; }
+  ul { list-style: none; margin: 0; padding: 0; min-height: 0; overflow: hidden; flex: 0 1 auto; }
+  li {
+    display: grid; grid-template-columns: 11vmin minmax(0, 1fr); align-items: baseline;
+    padding: 1.7vmin 0; border-top: .15vmin solid var(--faint);
+  }
+  li:first-child { border-top: 0; }
+  .at {
+    font-size: 3.6vmin; font-weight: 500; color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  .at.none { color: var(--faint); }
+  .what { font-size: 4.4vmin; line-height: 1.15; overflow-wrap: anywhere; }
+  .who { color: var(--muted); font-size: 3vmin; margin-left: 1.4vmin; white-space: nowrap; }
+  li.past .what, li.past .at { opacity: .38; }
+  .more { margin-top: 1.6vmin; font-size: 2.8vmin; color: var(--muted); padding-left: 11vmin; }
+
+  .late { margin-top: 4vmin; }
+  .late .head { color: var(--late); margin-bottom: 1.4vmin; }
+  .late li { padding: 1vmin 0; border: 0; }
+  .late .what { font-size: 3.2vmin; color: var(--text); opacity: .8; }
+  .late .at { font-size: 2.6vmin; color: var(--late); }
+
+  .next { margin-top: 4vmin; font-size: 2.8vmin; color: var(--muted); line-height: 1.5; }
+  .next b { font-weight: 600; letter-spacing: .14em; text-transform: uppercase; font-size: 2.3vmin; margin-right: 1.4vmin; }
+
+  .free { font-size: 6vmin; font-weight: 300; color: var(--muted); }
+
+  /* --- states --- */
+  .status {
+    position: fixed; right: calc(2.4vmin + env(safe-area-inset-right, 0px));
+    bottom: calc(2.4vmin + env(safe-area-inset-bottom, 0px));
+    font-size: 2vmin; color: var(--muted);
+  }
+  .gate {
+    position: fixed; inset: 0; display: grid; place-items: center; text-align: center;
+    padding: 8vmin; font-size: 3.4vmin; color: var(--muted); line-height: 1.5; background: var(--bg);
+  }
+  .gate b { color: var(--text); font-weight: 500; display: block; font-size: 4.6vmin; margin-bottom: 2vmin; }
+  .wake {
+    position: fixed; inset: 0; display: grid; place-items: end center; padding-bottom: 8vmin;
+    background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 2.6vmin; cursor: pointer;
+  }
+
+  /* Night: the clock stays, quietly; the lists step back until morning. */
+  body.night .wall { opacity: .32; }
+  body.night .tasks { visibility: hidden; }
+</style>
+</head>
+<body>
+<main class="wall" id="wall">
+  <section class="clock">
+    <div class="time" id="time">--:--</div>
+    <div class="date" id="date"></div>
+    <div class="mark" id="mark" hidden></div>
+  </section>
+  <section class="tasks" id="tasks"></section>
+</main>
+<div class="status" id="status" hidden></div>
+<div class="gate" id="gate" hidden></div>
+<button class="wake" id="wake" hidden>Коснитесь, чтобы экран не гас</button>
+
+<script>
+(function () {
+  'use strict';
+
+  var REFRESH_MS = 60 * 1000;
+  var NIGHT_FROM = 23 * 60, NIGHT_TO = 6 * 60 + 30;   // local minutes
+
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  };
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
+
+  // The key arrives once in the link and is kept, so a bookmark or a home-screen
+  // icon saved without it still opens the wall.
+  var params = new URLSearchParams(location.search);
+  var key = params.get('k') || store.get('wall:key') || '';
+  if (params.get('k')) store.set('wall:key', key);
+
+  var state = { tz: 'Europe/Madrid', data: null, failedAt: 0 };
+
+  /* ------------------------------------------------------------ clock --- */
+  // Shown in the family's zone, not the tablet's: a tablet that drifted to the
+  // wrong zone must not quietly move every appointment on the wall.
+  function parts(now) {
+    var f = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: state.tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    });
+    var p = {};
+    f.formatToParts(now).forEach(function (x) { p[x.type] = x.value; });
+    var iso = new Intl.DateTimeFormat('en-CA', {
+      timeZone: state.tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(now);
+    return { h: p.hour, m: p.minute, dow: p.weekday, day: p.day, month: p.month, iso: iso };
+  }
+
+  function tick() {
+    var p = parts(new Date());
+    $('time').innerHTML = p.h + '<span class="colon">:</span>' + p.m;
+    $('date').innerHTML = '<span class="dow">' + esc(p.dow) + '</span>' + esc(p.day + ' ' + p.month);
+
+    var mins = +p.h * 60 + +p.m;
+    document.body.classList.toggle('night', mins >= NIGHT_FROM || mins < NIGHT_TO);
+
+    // Past events dim as the day goes; a new day means fresh data, not a stale list.
+    if (state.data) {
+      if (state.data.today !== p.iso) load();
+      else markPast(p.h + ':' + p.m);
+    }
+  }
+
+  function markPast(hhmm) {
+    var rows = document.querySelectorAll('#today li[data-at]');
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].classList.toggle('past', rows[i].getAttribute('data-at') < hhmm);
+    }
+  }
+
+  function drift() {
+    var h = new Date().getHours();
+    var w = $('wall');
+    w.style.setProperty('--dx', ((h * 7) % 9 - 4) + 'px');
+    w.style.setProperty('--dy', ((h * 5) % 9 - 4) + 'px');
+  }
+
+  /* ------------------------------------------------------------- data --- */
+  function load() {
+    if (!key) return gate('Нужна ссылка с ключом', 'Откройте адрес вида /wall?k=…<br>Ключ — это WALL_KEY бота.');
+    fetch('/api/wall?k=' + encodeURIComponent(key), { cache: 'no-store' })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          if (res.status === 403 || res.status === 503) return gate('Нет доступа', esc(res.j.error || ''));
+          throw new Error(res.j.error || res.status);
+        }
+        $('gate').hidden = true;
+        state.data = res.j;
+        state.tz = res.j.tz || state.tz;
+        state.failedAt = 0;
+        $('status').hidden = true;
+        render();
+        tick();
+      })
+      .catch(function () {
+        // Keep the last good list on the wall; just admit it may be old.
+        if (!state.failedAt) state.failedAt = Date.now();
+        if (Date.now() - state.failedAt > 3 * REFRESH_MS) {
+          $('status').textContent = 'нет связи';
+          $('status').hidden = false;
+        }
+      });
+  }
+
+  function gate(title, body) {
+    $('gate').innerHTML = '<div><b>' + title + '</b>' + body + '</div>';
+    $('gate').hidden = false;
+  }
+
+  /* ----------------------------------------------------------- render --- */
+  function row(t, cls) {
+    return '<li class="' + (cls || '') + '"' + (t.time ? ' data-at="' + t.time + '"' : '') + '>'
+      + '<span class="at' + (t.time ? '' : ' none') + '">' + (t.time || '·') + '</span>'
+      + '<span class="what">' + esc(t.content)
+      + (t.who ? '<span class="who">' + esc(t.who) + '</span>' : '') + '</span></li>';
+  }
+
+  function shortDay(iso) {
+    var d = new Date(iso + 'T12:00:00Z');
+    return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+      .format(d).replace('.', '');
+  }
+
+  function render() {
+    var d = state.data;
+
+    var m = d.mark;
+    $('mark').hidden = !m;
+    if (m) {
+      $('mark').textContent = m.label + (m.note ? ' · ' + m.note : '');
+      $('mark').style.setProperty('--mc', m.color || '');
+    }
+
+    var out = [];
+    out.push(d.tasks.length
+      ? '<div class="head">Сегодня <span class="n">' + d.tasks.length + '</span></div>'
+        + '<ul id="today">' + d.tasks.map(function (t) { return row(t); }).join('') + '</ul><div class="more" id="more" hidden></div>'
+      : '<div class="free">Сегодня свободно</div>');
+
+    if (d.overdue.length) {
+      var late = d.overdue.slice(0, 3);
+      out.push('<div class="late"><div class="head">Просрочено <span class="n">' + d.overdue.length + '</span></div><ul>'
+        + late.map(function (t) { return row({ content: t.content, who: t.who, time: shortDay(t.date) }); }).join('')
+        + '</ul></div>');
+    }
+
+    var tm = d.tomorrowMark;
+    if (d.tomorrow.length || tm) {
+      var bits = d.tomorrow.slice(0, 3).map(function (t) {
+        return (t.time ? t.time + ' ' : '') + esc(t.content);
+      });
+      if (d.tomorrow.length > 3) bits.push('ещё ' + (d.tomorrow.length - 3));
+      if (tm) bits.unshift(esc(tm.label));
+      out.push('<div class="next"><b>Завтра</b>' + bits.join(' · ') + '</div>');
+    }
+
+    $('tasks').innerHTML = out.join('');
+    var p = parts(new Date());
+    markPast(p.h + ':' + p.m);
+    fit();
+  }
+
+  // A long day must not spill off the screen or end on half a line. Rows go
+  // until it fits — what is already over first, since that matters least now,
+  // then from the end — and the count of what went is said underneath.
+  function fit() {
+    var list = $('today'), more = $('more');
+    if (!list) return;
+    var tasks = $('tasks'), hidden = 0;
+    var over = function () {
+      return list.scrollHeight > list.clientHeight + 1 || tasks.scrollHeight > tasks.clientHeight + 1;
+    };
+    while (over() && list.children.length > 1) {
+      list.removeChild(list.querySelector('li.past') || list.lastElementChild);
+      hidden++;
+      more.textContent = 'и ещё ' + hidden;
+      more.hidden = false;
+    }
+  }
+
+  /* ------------------------------------------------------------- wake --- */
+  // A wall display that sleeps after two minutes is a black rectangle.
+  var lock = null;
+  function wake() {
+    if (!('wakeLock' in navigator)) return;
+    navigator.wakeLock.request('screen').then(function (l) {
+      lock = l;
+      $('wake').hidden = true;
+      l.addEventListener('release', function () { lock = null; });
+    }).catch(function () {
+      // Some browsers grant it only after a tap.
+      $('wake').hidden = false;
+    });
+  }
+  $('wake').addEventListener('click', function () {
+    wake();
+    if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {});
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') { if (!lock) wake(); load(); }
+  });
+
+  window.addEventListener('resize', function () { if (state.data) render(); });
+
+  tick();
+  drift();
+  load();
+  wake();
+  setInterval(tick, 5000);
+  setInterval(load, REFRESH_MS);
+  setInterval(drift, 60 * 60 * 1000);
+})();
+</script>
+</body>
+</html>

@@ -30,6 +30,7 @@ sees it, so any capability added as a tool works in both channels automatically.
 src/index.js            the Worker — everything lives here
 test/                   `npm test` — stubbed upstreams, no network, no keys
 src/app.html            the Mini App page, bundled in as a string (§9)
+src/wall.html           the wall display for a tablet (§9.4)
 wrangler.toml           non-secret config; project id and timezone are filled in
 scripts/wg.sh           wrangler wrapper — prefers wrangler.local.toml
 scripts/google-auth.mjs one-time Google OAuth for the archive (§12)
@@ -83,7 +84,7 @@ to configure.
 
 Not in git, and never should be: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
 `ANTHROPIC_API_KEY`, `TODOIST_API_TOKEN`, `GROQ_API_KEY`, `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`. They are Cloudflare
+`GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `WALL_KEY`. They are Cloudflare
 Worker secrets. `.dev.vars` (local dev only) is gitignored; `.dev.vars.example`
 is the empty template. Personal ids live in the gitignored
 `wrangler.local.toml` — see §3.3.
@@ -636,6 +637,37 @@ is defined twice, and `data-scheme` (inside Telegram) or `prefers-color-scheme`
 (in a plain browser) picks the set. `color-scheme` is set alongside it so
 scrollbars and the overscroll area follow too, and `html` carries the background
 so overscroll does not flash white.
+
+### 9.4 Wall display — `/wall`
+
+A page for a tablet that hangs on the wall and is read from across the room: a
+large clock in the family's zone, the date, a «Нет школы» pill on marked days,
+today's tasks in clock order (timed first, then the rest), up to three overdue
+ones, and a one-line peek at tomorrow. Dark, so it is not a lamp in the
+evening; between 23:00 and 06:30 the lists step back and only a dimmed clock
+stays. Tasks whose time has passed dim as the day goes, and when a day has more
+than fits, the passed ones leave first and the rest is counted as «и ещё N».
+
+```
+https://<worker-host>/wall?k=<WALL_KEY>
+```
+
+**Authorisation.** The Mini App can ask Telegram who is looking; a wall tablet
+has no Telegram. So the link carries a secret, `WALL_KEY`, compared in constant
+time. The page keeps the key in `localStorage`, so a home-screen icon saved
+without the `?k=` part still opens. Without `WALL_KEY` set, `/api/wall` answers
+503 and the page says so. To revoke a tablet, put a new key:
+
+```bash
+openssl rand -hex 16 | npm run secret -- put WALL_KEY
+```
+
+**Keeping it on.** The page holds a Screen Wake Lock; a browser that only grants
+one after a tap shows «Коснитесь, чтобы экран не гас» until tapped. Also turn
+off auto-lock on the tablet itself, and on an iPad use Guided Access (or "Add to
+Home Screen" for a full-screen icon). Data refreshes every minute; after three
+failed refreshes a small «нет связи» appears and the last list stays up. Once
+an hour the layout shifts by a few pixels so nothing sits on one spot for months.
 
 ---
 

@@ -17,6 +17,7 @@
  */
 
 import APP_HTML from './app.html';
+import WALL_HTML from './wall.html';
 
 const TD = 'https://api.todoist.com/api/v1';
 const MODEL = 'claude-sonnet-5';
@@ -33,7 +34,7 @@ export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
 
-    // The Mini App page and the data it reads are the only GET surface here;
+    // The Mini App, the wall display and the data they read are the only GET surface here;
     // everything else this Worker answers is the Telegram webhook.
     if (path === '/app' || path === '/app/') {
       return new Response(APP_HTML, {
@@ -46,6 +47,12 @@ export default {
       });
     }
     if (path === '/api/tasks') return apiTasks(request, env);
+    if (path === '/wall' || path === '/wall/') {
+      return new Response(WALL_HTML, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      });
+    }
+    if (path === '/api/wall') return apiWall(request, env);
 
     if (request.method !== 'POST') return new Response('ok');
 
@@ -2220,6 +2227,54 @@ async function apiTasks(request, env) {
       who: t.responsible_uid ? nameOf[String(t.responsible_uid)] ?? null : null,
       url: `${TD_APP}/task/${t.id}`,
     })),
+  });
+}
+
+/**
+ * Data for the wall display (/wall): today at a glance, for a tablet that
+ * hangs in the hallway and is read from across the room.
+ *
+ * No Telegram there to vouch for the viewer, so the page carries WALL_KEY in
+ * its link instead — the same family-only data the Mini App shows, behind a
+ * secret the family keeps in a bookmark. Without the secret set, it is off.
+ */
+async function apiWall(request, env) {
+  const key = new URL(request.url).searchParams.get('k') || '';
+  if (!env.WALL_KEY) return json({ error: 'WALL_KEY не задан — экран выключен.' }, 503);
+  if (!sameSecret(key, env.WALL_KEY)) return json({ error: 'Неверный ключ в ссылке.' }, 403);
+
+  const tz = env.TZ_NAME || 'Europe/Madrid';
+  const today = localParts(tz).date;
+  const tomorrow = shiftDate(today, 1);
+  const [all, people, marks] = await Promise.all([listTasks(env), roster(env), getMarks(env)]);
+  const nameOf = Object.fromEntries(people.map(p => [p.id, p.name.split(' ')[0]]));
+
+  const day = t => t.due?.date?.slice(0, 10) ?? null;
+  const item = t => ({
+    id: String(t.id),
+    content: t.content,
+    time: t.due.date.length > 10 ? t.due.date.slice(11, 16) : null,
+    date: day(t),
+    priority: t.priority ?? 1,
+    who: t.responsible_uid ? nameOf[String(t.responsible_uid)] ?? null : null,
+  });
+  // Untimed first is wrong for a wall: the timed ones are the appointments, so
+  // they lead in clock order and the rest of the day follows.
+  const byTime = (a, b) => (a.time ?? '99').localeCompare(b.time ?? '99') || a.content.localeCompare(b.content, 'ru');
+  const on = d => all.filter(t => day(t) === d).map(item).sort(byTime);
+  const markOn = d => marks.find(m => m.from <= d && d <= (m.to || m.from)) ?? null;
+  const label = m => m && { label: MARK_KINDS[m.kind]?.label ?? m.kind, note: m.note || null,
+    color: MARK_KINDS[m.kind]?.colorDark ?? null };
+
+  return json({
+    tz,
+    today,
+    mark: label(markOn(today)),
+    tomorrowMark: label(markOn(tomorrow)),
+    overdue: all.filter(t => day(t) && day(t) < today).map(item)
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    tasks: on(today),
+    tomorrow: on(tomorrow),
   });
 }
 

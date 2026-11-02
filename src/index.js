@@ -18,6 +18,7 @@
 
 import APP_HTML from './app.html';
 import WALL_HTML from './wall.html';
+import WALL_ICON_PNG from './wall-icon.png';
 
 const TD = 'https://api.todoist.com/api/v1';
 const MODEL = 'claude-sonnet-5';
@@ -53,6 +54,28 @@ export default {
       });
     }
     if (path === '/api/wall') return apiWall(request, env);
+    // What makes "Add to Home screen" on Android an app that opens full screen
+    // instead of a bookmark into a browser tab. No key in start_url: the page
+    // keeps it in localStorage, and the manifest is public.
+    if (path === '/wall.webmanifest') {
+      return new Response(JSON.stringify({
+        name: 'Сегодня', short_name: 'Сегодня',
+        start_url: '/wall', scope: '/wall', id: '/wall',
+        display: 'fullscreen', orientation: 'any',
+        background_color: '#0b0c0e', theme_color: '#0b0c0e',
+        // PNG for Chrome's install check, which wants a 192px+ raster; SVG for the rest.
+        icons: [
+          { src: '/wall-icon.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+          { src: '/wall-icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' },
+        ],
+      }), { headers: { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' } });
+    }
+    if (path === '/wall-icon.png') {
+      return new Response(WALL_ICON_PNG, { headers: { 'content-type': 'image/png', 'cache-control': 'max-age=86400' } });
+    }
+    if (path === '/wall-icon.svg') {
+      return new Response(WALL_ICON, { headers: { 'content-type': 'image/svg+xml', 'cache-control': 'max-age=86400' } });
+    }
 
     if (request.method !== 'POST') return new Response('ok');
 
@@ -2229,6 +2252,16 @@ async function apiTasks(request, env) {
     })),
   });
 }
+
+/**
+ * Home-screen icon for the wall: a clock face, drawn inside the maskable safe
+ * zone. src/wall-icon.png is this same drawing at 512px.
+ */
+const WALL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">'
+  + '<rect width="512" height="512" fill="#0b0c0e"/>'
+  + '<circle cx="256" cy="256" r="120" fill="none" stroke="#f2efe9" stroke-width="20"/>'
+  + '<path d="M256 186v70l48 32" fill="none" stroke="#e9b872" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>'
+  + '</svg>';
 
 /**
  * Data for the wall display (/wall): today at a glance, for a tablet that

@@ -31,6 +31,7 @@ src/index.js            the Worker — everything lives here
 test/                   `npm test` — stubbed upstreams, no network, no keys
 src/app.html            the Mini App page, bundled in as a string (§9)
 src/wall.html           the wall display for a tablet (§9.4)
+src/wall-icon.png       its home-screen icon, bundled in as bytes
 wrangler.toml           non-secret config; project id and timezone are filled in
 scripts/wg.sh           wrangler wrapper — prefers wrangler.local.toml
 scripts/google-auth.mjs one-time Google OAuth for the archive (§12)
@@ -661,6 +662,12 @@ without the `?k=` part still opens. Without `WALL_KEY` set, `/api/wall` answers
 ```bash
 openssl rand -hex 16 | npm run secret -- put WALL_KEY
 ```
+
+**Full screen.** `/wall.webmanifest` declares `display: fullscreen`, so on
+Android Chrome *⋮ → Add to Home screen → Install* gives an icon that opens with
+no address bar or status bar. In a plain tab, any tap asks for full screen
+instead. The manifest's `start_url` is `/wall` without the key — the page
+already has it in `localStorage` from the first visit with `?k=`.
 
 **Keeping it on.** The page holds a Screen Wake Lock; a browser that only grants
 one after a tap shows «Коснитесь, чтобы экран не гас» until tapped. Also turn

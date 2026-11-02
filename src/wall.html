@@ -7,6 +7,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0b0c0e">
+<link rel="manifest" href="/wall.webmanifest">
+<link rel="icon" href="/wall-icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/wall-icon.png">
 <title>Сегодня</title>
 <style>
   /* A wall display, read from across the hallway. Dark on purpose: a lit white
@@ -325,10 +328,14 @@
       $('wake').hidden = false;
     });
   }
-  $('wake').addEventListener('click', function () {
-    wake();
-    if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {});
-  });
+  // Browsers grant full screen only from a tap, so any tap on the wall asks
+  // for it — opened from a plain tab, one touch hides the address bar.
+  function fullscreen() {
+    var el = document.documentElement;
+    if (document.fullscreenElement || !el.requestFullscreen) return;
+    el.requestFullscreen({ navigationUI: 'hide' }).catch(function () {});
+  }
+  document.addEventListener('click', function () { wake(); fullscreen(); });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') { if (!lock) wake(); load(); }
   });

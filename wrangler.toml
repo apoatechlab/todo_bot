@@ -75,5 +75,11 @@ type   = "Text"
 globs  = ["**/*.html"]
 fallthrough = false
 
+# The wall display's home-screen icon, bundled in as bytes.
+[[rules]]
+type   = "Data"
+globs  = ["**/*.png"]
+fallthrough = false
+
 [observability]
 enabled = true

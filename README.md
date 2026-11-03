@@ -655,8 +655,9 @@ https://<worker-host>/wall?k=<WALL_KEY>
 
 **The rest of the week.** Every 20 seconds the task side crossfades to «Ещё на
 этой неделе» — the days after today up to Sunday, grouped by day, empty days
-skipped — for 7 seconds, then back. On Saturday and Sunday there is too little
-week left to bother, so it shows «На следующей неделе» instead; with nothing
+skipped — for 9 seconds, then back. Each turn is a slow fade out, a short
+pause, then a slow fade in, so the two never overlap. On Saturday and Sunday
+there is too little week left to bother, so it shows «На следующей неделе» instead; with nothing
 ahead at all, it does not turn.
 
 **Week view.** A horizontal swipe in either direction slides in the whole week,

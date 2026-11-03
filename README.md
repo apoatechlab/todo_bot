@@ -732,6 +732,16 @@ with any screen saver, so the week swipe is a tablet-only thing. The APK is
 signed with the debug key in `~/.android/debug.keystore`; rebuilding on
 another machine means uninstalling first.
 
+**Live wallpaper.** Android starts a screen saver only on the charger, and the
+always-on display cannot be replaced. The same app therefore also offers a live
+wallpaper, «Сегодня — задачи». It draws today's tasks, the overdue line and
+tomorrow in the band between the system clock and the fingerprint area. It
+keeps no connection open: it fetches `/api/wall` when it becomes visible, i.e.
+when the screen lights up, and every 5 minutes while visible. It draws the last
+good answer meanwhile, or «НЕТ СВЯЗИ» if that answer is from another day. Set it
+with the app's «Поставить обои с задачами» button, then choose the lock screen
+only, so the home screen keeps its photo.
+
 ## 10. Calendar marks — дни без школы
 
 Whole days can be shaded on the calendar. Today there is one kind, `school-off`,

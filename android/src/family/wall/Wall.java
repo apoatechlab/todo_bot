@@ -1,6 +1,7 @@
 package family.wall;
 
 import android.content.Context;
+import android.net.Uri;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 
@@ -14,6 +15,14 @@ final class Wall {
 
     static void save(Context c, String url) {
         c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(URL, url.trim()).apply();
+    }
+
+    /** The JSON behind the wall page: same host, same key. */
+    static String api(Context c) {
+        Uri u = Uri.parse(url(c));
+        String k = u.getQueryParameter("k");
+        if (u.getScheme() == null || u.getEncodedAuthority() == null || k == null || k.isEmpty()) return null;
+        return u.getScheme() + "://" + u.getEncodedAuthority() + "/api/wall?k=" + Uri.encode(k);
     }
 
     static WebView view(Context c) {

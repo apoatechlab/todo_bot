@@ -13,8 +13,9 @@ OUT=build
 
 rm -rf "$OUT" && mkdir -p "$OUT/classes"
 
-"$BT/aapt2" link -o "$OUT/base.apk" -I "$JAR" --manifest AndroidManifest.xml \
-  --min-sdk-version 26 --target-sdk-version 35 --version-code 1 --version-name 1.0
+"$BT/aapt2" compile --dir res -o "$OUT/res.zip"
+"$BT/aapt2" link -o "$OUT/base.apk" -I "$JAR" --manifest AndroidManifest.xml "$OUT/res.zip" \
+  --min-sdk-version 26 --target-sdk-version 35 --version-code 2 --version-name 1.1
 
 javac --release 11 -classpath "$JAR" -d "$OUT/classes" $(find src -name "*.java")
 "$BT/d8" --release --lib "$JAR" --min-api 26 --output "$OUT" $(find "$OUT/classes" -name '*.class')

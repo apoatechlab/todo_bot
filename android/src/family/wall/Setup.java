@@ -1,6 +1,8 @@
 package family.wall;
 
 import android.app.Activity;
+import android.app.WallpaperManager;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -54,6 +56,14 @@ public class Setup extends Activity {
         dream.setText("Настройки заставки");
         dream.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_DREAM_SETTINGS)));
         root.addView(dream);
+
+        Button paper = new Button(this);
+        paper.setText("Поставить обои с задачами");
+        paper.setOnClickListener(v -> startActivity(
+                new Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).putExtra(
+                        WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
+                        new ComponentName(this, WallPaper.class))));
+        root.addView(paper);
 
         setContentView(root);
     }

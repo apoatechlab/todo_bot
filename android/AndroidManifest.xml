@@ -18,6 +18,18 @@
             </intent-filter>
         </service>
 
+        <!-- Live wallpaper: today's tasks on the lock screen, on battery too. -->
+        <service
+            android:name=".WallPaper"
+            android:exported="true"
+            android:label="Сегодня — задачи"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data android:name="android.service.wallpaper" android:resource="@xml/wallpaper" />
+        </service>
+
         <!-- Where the wall link (with its key) is pasted once. -->
         <activity
             android:name=".Setup"

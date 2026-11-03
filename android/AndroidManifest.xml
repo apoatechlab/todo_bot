@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="family.wall">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application android:label="Сегодня" android:allowBackup="false">
+
+        <!-- The screen saver itself: the wall page, full screen, while charging. -->
+        <service
+            android:name=".WallDream"
+            android:exported="true"
+            android:label="Сегодня — часы и задачи"
+            android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <!-- Where the wall link (with its key) is pasted once. -->
+        <activity
+            android:name=".Setup"
+            android:exported="true"
+            android:label="Сегодня">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

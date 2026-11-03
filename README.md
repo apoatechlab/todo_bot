@@ -709,6 +709,29 @@ needs the `[[durable_objects.bindings]]` and `[[migrations]]` blocks in
 
 ---
 
+### 9.5 Android screen saver — `android/`
+
+The same page as Android's screen saver, shown whenever the phone sits on the
+charger. It is a tiny app with no Gradle: a `DreamService` holding a WebView,
+and a setup screen where the `/wall?k=…` link is pasted once. Build and install
+it over adb (needs JDK 11+ and the Android SDK with build-tools 35 and platform
+35; `ANDROID_HOME` points at it):
+
+```bash
+android/build.sh --install
+ADB=adb   # or the full path to platform-tools/adb
+$ADB shell am start -n family.wall/.Setup --es url "'https://<worker>/wall?k=<WALL_KEY>'"
+$ADB shell settings put secure screensaver_components family.wall/.WallDream
+$ADB shell settings put secure screensaver_enabled 1
+$ADB shell settings put secure screensaver_activate_on_sleep 1   # while charging
+```
+
+Without adb: open «Сегодня» from the app list, paste the link, then
+«Настройки заставки» → pick «Сегодня». The first touch wakes the phone, as
+with any screen saver, so the week swipe is a tablet-only thing. The APK is
+signed with the debug key in `~/.android/debug.keystore`; rebuilding on
+another machine means uninstalling first.
+
 ## 10. Calendar marks — дни без школы
 
 Whole days can be shaded on the calendar. Today there is one kind, `school-off`,

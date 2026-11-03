@@ -9,3 +9,6 @@ wrangler.local.toml
 
 *.zip
 .DS_Store
+
+# Android screen saver build output
+android/build/

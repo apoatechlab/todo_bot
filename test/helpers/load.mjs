@@ -14,7 +14,8 @@ export async function loadWorker() {
   const src = readFileSync(new URL('../../src/index.js', import.meta.url), 'utf8')
     .replace("import APP_HTML from './app.html';", "const APP_HTML = '<!doctype html>';")
     .replace("import WALL_HTML from './wall.html';", "const WALL_HTML = '<!doctype html>';")
-    .replace("import WALL_ICON_PNG from './wall-icon.png';", "const WALL_ICON_PNG = new Uint8Array();");
+    .replace("import WALL_ICON_PNG from './wall-icon.png';", "const WALL_ICON_PNG = new Uint8Array();")
+    .replace("import WALL_APK from './wall.apk';", "const WALL_APK = new Uint8Array();");
 
   const names = new Set();
   for (const m of src.matchAll(/^(?:async )?function ([A-Za-z_$][\w$]*)\s*\(/gm)) names.add(m[1]);

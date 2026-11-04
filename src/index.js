@@ -19,6 +19,7 @@
 import APP_HTML from './app.html';
 import WALL_HTML from './wall.html';
 import WALL_ICON_PNG from './wall-icon.png';
+import WALL_APK from './wall.apk';
 
 const TD = 'https://api.todoist.com/api/v1';
 const MODEL = 'claude-sonnet-5';
@@ -73,6 +74,17 @@ export default {
     }
     if (path === '/wall-icon.png') {
       return new Response(WALL_ICON_PNG, { headers: { 'content-type': 'image/png', 'cache-control': 'max-age=86400' } });
+    }
+    // The Android app (wall mode, screen saver, lock-screen wallpaper) for a
+    // device with no cable to adb from. Behind the wall key like the page.
+    if (path === '/wall.apk') {
+      const key = new URL(request.url).searchParams.get('k') || '';
+      if (!env.WALL_KEY || !sameSecret(key, env.WALL_KEY)) return new Response('forbidden', { status: 403 });
+      return new Response(WALL_APK, { headers: {
+        'content-type': 'application/vnd.android.package-archive',
+        'content-disposition': 'attachment; filename="segodnya.apk"',
+        'cache-control': 'no-store',
+      } });
     }
     if (path === '/wall-icon.svg') {
       return new Response(WALL_ICON, { headers: { 'content-type': 'image/svg+xml', 'cache-control': 'max-age=86400' } });

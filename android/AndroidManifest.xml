@@ -3,8 +3,16 @@
     package="family.wall">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Wall mode: wake the screen at 06:30, start after a reboot, and come to
+         the front from the background (granted in settings or over adb). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.TURN_SCREEN_ON" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <application android:label="Сегодня" android:allowBackup="false">
+    <application android:label="Сегодня" android:icon="@drawable/icon" android:allowBackup="false">
 
         <!-- The screen saver itself: the wall page, full screen, while charging. -->
         <service
@@ -30,11 +38,33 @@
             <meta-data android:name="android.service.wallpaper" android:resource="@xml/wallpaper" />
         </service>
 
+        <!-- Wall mode for a tablet: the page full screen, dark at night. -->
+        <activity
+            android:name=".WallActivity"
+            android:exported="true"
+            android:label="Сегодня"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <receiver android:name=".Wake" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="family.wall.MORNING" />
+            </intent-filter>
+        </receiver>
+
         <!-- Where the wall link (with its key) is pasted once. -->
         <activity
             android:name=".Setup"
             android:exported="true"
-            android:label="Сегодня">
+            android:label="Сегодня: настройки">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

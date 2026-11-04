@@ -138,7 +138,6 @@
   }
   .week.open { transform: none; opacity: 1; pointer-events: auto; }
   body.week-open .wall { opacity: 0; transform: translateX(var(--away, -6vmin)); }
-  body.night .week.open { opacity: .6; }
   .wk-head { display: flex; align-items: baseline; gap: 2.4vmin; margin-bottom: 3vmin; }
   .wk-head b { font-size: 2.6vmin; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
   .wk-head span { font-size: 3.6vmin; }
@@ -190,9 +189,11 @@
     background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 2.6vmin; cursor: pointer;
   }
 
-  /* Night: the whole wall dims so it is not a lamp in the hallway, but stays
-     readable — a list that vanished at 23:00 looked like the page had broken. */
-  body.night .wall { opacity: .45; }
+  /* Night: plain black, so the hallway stays dark. A touch brings the page back
+     for half a minute, so a dark screen never looks broken. */
+  body.night:not(.awake) .wall, body.night:not(.awake) .week, body.night:not(.awake) .wake {
+    opacity: 0 !important; pointer-events: none; transition: opacity 2.5s ease;
+  }
 </style>
 </head>
 <body>
@@ -541,17 +542,27 @@
     document.body.classList.remove('week-open');
   }
 
+  var nightPeek = null;
   function poke() {
+    if (document.body.classList.contains('night')) {
+      document.body.classList.add('awake');
+      clearTimeout(nightPeek);
+      nightPeek = setTimeout(function () { document.body.classList.remove('awake'); }, WEEK_IDLE);
+    }
     if (!state.weekOpen) return;
     clearTimeout(weekIdle);
     weekIdle = setTimeout(function () { closeWeek(); }, WEEK_IDLE);
   }
 
   // Either direction opens it, following the finger; either direction closes.
-  var sx = null, sy = null;
-  document.addEventListener('pointerdown', function (e) { sx = e.clientX; sy = e.clientY; poke(); });
+  var sx = null, sy = null, dark = false;
+  document.addEventListener('pointerdown', function (e) {
+    var b = document.body.classList;
+    dark = b.contains('night') && !b.contains('awake');   // the first touch at night only wakes the page
+    sx = e.clientX; sy = e.clientY; poke();
+  });
   document.addEventListener('pointerup', function (e) {
-    if (sx === null) return;
+    if (sx === null || dark) { sx = null; return; }
     var dx = e.clientX - sx, dy = e.clientY - sy;
     sx = null;
     if (Math.abs(dx) < 60 || Math.abs(dx) < 1.5 * Math.abs(dy)) return;

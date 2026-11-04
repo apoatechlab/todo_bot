@@ -78,7 +78,7 @@ fallthrough = false
 # The wall display's home-screen icon, bundled in as bytes.
 [[rules]]
 type   = "Data"
-globs  = ["**/*.png"]
+globs  = ["**/*.png", "**/*.apk"]
 fallthrough = false
 
 # Live updates for the wall display: one object holds every tablet's socket,

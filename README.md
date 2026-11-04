@@ -645,8 +645,8 @@ A page for a tablet that hangs on the wall and is read from across the room: a
 large clock in the family's zone, the date, a «Нет школы» pill on marked days,
 today's tasks in clock order (timed first, then the rest), up to three overdue
 ones, and a one-line peek at tomorrow. Dark, so it is not a lamp in the
-evening; between 23:00 and 06:30 the whole page dims, lists included, but
-stays readable. Tasks whose time has passed dim as the day goes, and when a day has more
+evening; between 23:00 and 06:30 the page goes fully black, and a touch
+brings it back for 30 seconds. Tasks whose time has passed dim as the day goes, and when a day has more
 than fits, the passed ones leave first and the rest is counted as «и ещё N».
 
 ```
@@ -709,7 +709,28 @@ needs the `[[durable_objects.bindings]]` and `[[migrations]]` blocks in
 
 ---
 
-### 9.5 Android screen saver — `android/`
+### 9.5 Android app — `android/`
+
+One small app, three ways to show the wall: wall mode for a tablet, a screen
+saver and a lock-screen wallpaper.
+
+**Wall mode** (the «Сегодня» icon) is meant for the tablet. It shows the page
+full screen with no browser around it and holds the screen on by day. At 23:00
+it lets go, so the tablet sleeps on its own screen timeout. At 06:30 an alarm
+lights the screen and brings the wall back to the front. It also starts after a
+reboot or an update. Coming to the front from the background needs the
+«display over other apps» permission: grant it from the setup screen, or with
+`adb shell appops set family.wall SYSTEM_ALERT_WINDOW allow`. A lock screen
+with a PIN or pattern still asks for it in the morning; a swipe-only one does
+not. The alarm exists only on a device where wall mode has been opened, so a
+phone that only uses the screen saver or the wallpaper is never woken.
+
+Without a cable, open `https://<worker>/wall.apk?k=<WALL_KEY>` on the tablet,
+allow installing from the browser, then paste the `/wall?k=…` link into
+«Сегодня: настройки». `android/build.sh` copies each build to `src/wall.apk`,
+and `npm run deploy` publishes it.
+
+#### Screen saver
 
 The same page as Android's screen saver, shown whenever the phone sits on the
 charger. It is a tiny app with no Gradle: a `DreamService` holding a WebView,

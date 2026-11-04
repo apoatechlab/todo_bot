@@ -15,7 +15,7 @@ rm -rf "$OUT" && mkdir -p "$OUT/classes"
 
 "$BT/aapt2" compile --dir res -o "$OUT/res.zip"
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$JAR" --manifest AndroidManifest.xml "$OUT/res.zip" \
-  --min-sdk-version 26 --target-sdk-version 35 --version-code 2 --version-name 1.1
+  --min-sdk-version 26 --target-sdk-version 35 --version-code 3 --version-name 1.2
 
 javac --release 11 -classpath "$JAR" -d "$OUT/classes" $(find src -name "*.java")
 "$BT/d8" --release --lib "$JAR" --min-api 26 --output "$OUT" $(find "$OUT/classes" -name '*.class')
@@ -30,7 +30,9 @@ if [ ! -f "$KS" ]; then
     -alias androiddebugkey -keyalg RSA -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 fi
 "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --out "$OUT/wall-dream.apk" "$OUT/aligned.apk"
-echo "built $OUT/wall-dream.apk"
+# The worker serves this copy at /wall.apk?k=…, for a tablet with no cable.
+cp "$OUT/wall-dream.apk" ../src/wall.apk
+echo "built $OUT/wall-dream.apk (and src/wall.apk — deploy to publish it)"
 
 if [ "${1:-}" = "--install" ]; then
   "$SDK/platform-tools/adb" install -r "$OUT/wall-dream.apk"

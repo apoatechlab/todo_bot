@@ -70,4 +70,12 @@ ok('notify without binding is quiet', true);
 ok('add/complete wake the wall, search does not',
   W.WALL_TOOLS.has('add_task') && W.WALL_TOOLS.has('complete_task') && !W.WALL_TOOLS.has('search_tasks'));
 
+{
+  const get = k => W.default.fetch(new Request(`https://x/wall.apk${k == null ? '' : '?k=' + k}`), { WALL_KEY: 's3cret' });
+  eq('apk without key is refused', (await get()).status, 403);
+  eq('apk with a wrong key is refused', (await get('nope')).status, 403);
+  const r = await get('s3cret');
+  eq('apk with the key downloads', [r.status, r.headers.get('content-type')], [200, 'application/vnd.android.package-archive']);
+}
+
 done();

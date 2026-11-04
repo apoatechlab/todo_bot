@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.WallpaperManager;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
@@ -51,6 +52,20 @@ public class Setup extends Activity {
             Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show();
         });
         root.addView(save);
+
+        Button wall = new Button(this);
+        wall.setText("Открыть стену");
+        wall.setOnClickListener(v -> startActivity(new Intent(this, WallActivity.class)));
+        root.addView(wall);
+
+        // Needed to come back by itself at 06:30 and after a reboot.
+        if (!Settings.canDrawOverlays(this)) {
+            Button overlay = new Button(this);
+            overlay.setText("Разрешить включаться утром (поверх других приложений)");
+            overlay.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName()))));
+            root.addView(overlay);
+        }
 
         Button dream = new Button(this);
         dream.setText("Настройки заставки");

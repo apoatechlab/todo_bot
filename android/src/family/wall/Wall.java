@@ -17,6 +17,15 @@ final class Wall {
         c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(URL, url.trim()).apply();
     }
 
+    /** Set once the wall mode is opened here: only then does the morning alarm wake this device. */
+    static boolean wallMode(Context c) {
+        return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("wallMode", false);
+    }
+
+    static void setWallMode(Context c) {
+        c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("wallMode", true).apply();
+    }
+
     /** The JSON behind the wall page: same host, same key. */
     static String api(Context c) {
         Uri u = Uri.parse(url(c));

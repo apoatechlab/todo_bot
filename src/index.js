@@ -2298,6 +2298,22 @@ const WALL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
 const WEATHER_API = 'https://api.open-meteo.com/v1/forecast';
 const WEATHER_TTL = 900;            // Open-Meteo refreshes about every 15 minutes
 
+/**
+ * WMO code -> which shape to draw. Seven of them cover the whole table; the
+ * page turns the key into a line drawing, and «clear»/«partly» additionally
+ * pick a moon after dark.
+ */
+const WMO_ICON = {
+  0: 'clear', 1: 'clear', 2: 'partly', 3: 'cloud',
+  45: 'fog', 48: 'fog',
+  51: 'rain', 53: 'rain', 55: 'rain', 56: 'rain', 57: 'rain',
+  61: 'rain', 63: 'rain', 65: 'rain', 66: 'rain', 67: 'rain',
+  71: 'snow', 73: 'snow', 75: 'snow', 77: 'snow',
+  80: 'rain', 81: 'rain', 82: 'rain',
+  85: 'snow', 86: 'snow',
+  95: 'storm', 96: 'storm', 99: 'storm',
+};
+
 /** WMO code -> what to call it on a wall. Short: it is read from a doorway. */
 const WMO = {
   0: 'ясно', 1: 'почти ясно', 2: 'облачно', 3: 'пасмурно',
@@ -2319,7 +2335,9 @@ async function fetchWeather(env) {
   const q = new URLSearchParams({
     latitude: lat,
     longitude: lon,
-    current: 'temperature_2m,weather_code',
+    // is_day so a clear night gets a moon rather than a sun on a wall that is
+    // lit at 23:00.
+    current: 'temperature_2m,weather_code,is_day',
     daily: 'temperature_2m_max,temperature_2m_min,weather_code',
     timezone: env.TZ_NAME || 'Europe/Madrid',
     forecast_days: '2',
@@ -2333,12 +2351,17 @@ async function fetchWeather(env) {
     high: round(d.daily?.temperature_2m_max?.[i]),
     low: round(d.daily?.temperature_2m_min?.[i]),
     text: WMO[d.daily?.weather_code?.[i]] ?? null,
+    // A forecast is always drawn in daylight — a moon over tomorrow means
+    // nothing.
+    icon: WMO_ICON[d.daily?.weather_code?.[i]] ?? null,
   });
 
   return {
     place: env.WEATHER_PLACE || 'Барселона',
     now: round(d.current?.temperature_2m),
     text: WMO[d.current?.weather_code] ?? null,
+    icon: WMO_ICON[d.current?.weather_code] ?? null,
+    day: d.current?.is_day !== 0,
     today: day(0),
     tomorrow: day(1),
   };

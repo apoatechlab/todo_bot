@@ -653,10 +653,21 @@ than fits, the passed ones leave first and the rest is counted as «и ещё N�
 https://<worker-host>/wall?k=<WALL_KEY>
 ```
 
-**Weather, under the clock.** Temperature now, a word for the sky, today's
-high/low, then tomorrow on a second line — the same glance that asks what time
-it is asks whether anyone needs a coat. Muted, so it never competes with the
-hour.
+**Weather, under the clock.** A drawing of the sky, the temperature now, a word
+for it, today's high/low, then tomorrow on a second line — the same glance that
+asks what time it is asks whether anyone needs a coat. Muted, so it never
+competes with the hour.
+
+The icons are **inline SVG, not emoji**: emoji are colourful on a deliberately
+colourless page and are drawn differently on every device, while a stroked glyph
+takes the page's own palette and scales with everything else in `vmin`. Seven
+shapes cover the whole WMO table — clear, partly, cloud, fog, rain, snow, storm
+— and the Worker sends the key, so the mapping lives in one place. Two more
+exist for after dark: `is_day` from Open-Meteo turns a clear sky into a crescent
+rather than a sun on a wall that is lit at 23:00. A forecast is always drawn in
+daylight, since a moon over tomorrow means nothing. A test asserts that every
+code the text table names also has a shape, and that the page actually draws
+each one.
 
 It comes from [Open-Meteo](https://open-meteo.com) — no key, no account —
 fetched **by the Worker** rather than by the page: one cached call serves every

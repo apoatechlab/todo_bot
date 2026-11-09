@@ -72,7 +72,17 @@
     font-variant-numeric: tabular-nums;
   }
   .wx .sep { color: var(--faint); margin: 0 1.2vmin; }
-  .wx .tm { display: block; font-size: 2.6vmin; margin-top: .6vmin; }
+  .wx .tm { display: flex; align-items: center; font-size: 2.6vmin; margin-top: .8vmin; }
+  .wx .row { display: flex; align-items: center; }
+  /* Line art, not emoji: emoji are colourful on a deliberately colourless page
+     and are drawn differently on every device. A stroked glyph takes the page's
+     own colour and scales with everything else. */
+  .wi { flex: none; width: 6vmin; height: 6vmin; margin-right: 1.6vmin; color: var(--muted); }
+  .tm .wi { width: 3.6vmin; height: 3.6vmin; margin-right: 1vmin; }
+  .wi .sun { color: var(--accent); }
+  .wi .drop { color: #7fa8c9; }
+  .wi .flake { color: #a8c4d8; }
+  .wi .bolt { color: var(--accent); }
 
   @media (orientation: portrait) {
     .clock { display: grid; grid-template-columns: auto 1fr; align-items: end; gap: 3vmin 4vmin; }
@@ -353,25 +363,76 @@
       .format(new Date(iso + 'T12:00:00Z')).replace(/^\d+\s*/, '');
   }
 
+  /* Stroked at 24x24, inheriting currentColor so the page's palette drives it.
+     Parts that earn a colour of their own — the sun, drops, flakes, the bolt —
+     carry a class and take it from CSS. */
+  var ICONS = {
+    clear:
+      '<circle cx="12" cy="12" r="4.2" class="sun"/>'
+      + '<g class="sun"><path d="M12 2.2v2.4M12 19.4v2.4M2.2 12h2.4M19.4 12h2.4'
+      + 'M5.1 5.1l1.7 1.7M17.2 17.2l1.7 1.7M18.9 5.1l-1.7 1.7M6.8 17.2l-1.7 1.7"/></g>',
+    moon:
+      '<path class="sun" d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
+    partly:
+      '<g class="sun"><circle cx="8.6" cy="8" r="3.1"/>'
+      + '<path d="M8.6 1.9v1.6M2.5 8h1.6M4.3 3.7l1.1 1.1M12.9 3.7l-1.1 1.1"/></g>'
+      + '<path d="M8.2 20.5h8.9a3.7 3.7 0 0 0 .4-7.3 5.2 5.2 0 0 0-9.9-.7 3.8 3.8 0 0 0 .6 8z"/>',
+    partlyNight:
+      '<path class="sun" d="M13.6 9.4A5.4 5.4 0 0 1 7 2.9a5.4 5.4 0 1 0 6.6 6.5z"/>'
+      + '<path d="M8.2 20.5h8.9a3.7 3.7 0 0 0 .4-7.3 5.2 5.2 0 0 0-9.9-.7 3.8 3.8 0 0 0 .6 8z"/>',
+    cloud:
+      '<path d="M7.4 19.5h9.8a4 4 0 0 0 .4-8 5.6 5.6 0 0 0-10.7-.8 4.1 4.1 0 0 0 .5 8.8z"/>',
+    fog:
+      '<path d="M7.4 15.2h9.8a4 4 0 0 0 .4-8 5.6 5.6 0 0 0-10.7-.8 4.1 4.1 0 0 0 .5 8.8z"/>'
+      + '<path d="M4.5 18.6h15M7 21.6h10"/>',
+    rain:
+      '<path d="M7.4 15.4h9.8a4 4 0 0 0 .4-8 5.6 5.6 0 0 0-10.7-.8 4.1 4.1 0 0 0 .5 8.8z"/>'
+      + '<g class="drop"><path d="M9 18.3l-1.2 3M13 18.3l-1.2 3M17 18.3l-1.2 3"/></g>',
+    snow:
+      '<path d="M7.4 15.4h9.8a4 4 0 0 0 .4-8 5.6 5.6 0 0 0-10.7-.8 4.1 4.1 0 0 0 .5 8.8z"/>'
+      + '<g class="flake"><path d="M8.4 18.4v3M7.1 19.2l2.6 1.5M9.7 19.2l-2.6 1.5'
+      + 'M15.6 18.4v3M14.3 19.2l2.6 1.5M16.9 19.2l-2.6 1.5"/></g>',
+    storm:
+      '<path d="M7.4 14.6h9.8a4 4 0 0 0 .4-8 5.6 5.6 0 0 0-10.7-.8 4.1 4.1 0 0 0 .5 8.8z"/>'
+      // Kept clear of y=24: at stroke-width 1.5 the old tip was shaved flat by
+      // the edge of the viewBox.
+      + '<path class="bolt" d="M13.4 15.5L10.2 19.4h2.6L10.9 22.1"/>',
+  };
+
+  /**
+   * `night` only swaps the two shapes a sun belongs to. Rain is rain after dark.
+   */
+  function iconHtml(key, night) {
+    var k = key;
+    if (night && key === 'clear') k = 'moon';
+    if (night && key === 'partly') k = 'partlyNight';
+    if (!ICONS[k]) return '';
+    return '<svg class="wi" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+      + ' stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"'
+      + ' aria-hidden="true">' + ICONS[k] + '</svg>';
+  }
+
   /** Temperature now, the day's range, and a word about tomorrow. */
   function renderWeather(w) {
     var el = $('wx');
     if (!w || w.now === null || w.now === undefined) { el.hidden = true; return; }
 
-    var out = '<span class="t">' + w.now + '°</span>';
-    if (w.text) out += '<span class="sep">·</span>' + esc(w.text);
+    var line = iconHtml(w.icon, w.day === false)
+      + '<span class="t">' + w.now + '°</span>';
+    if (w.text) line += '<span class="sep">·</span>' + esc(w.text);
 
     var t = w.today;
     // The range is only worth the width once the day has somewhere left to go.
     if (t && t.high !== null && t.low !== null) {
-      out += '<span class="sep">·</span>' + t.high + '° / ' + t.low + '°';
+      line += '<span class="sep">·</span>' + t.high + '° / ' + t.low + '°';
     }
+    var out = '<div class="row">' + line + '</div>';
 
     var n = w.tomorrow;
     if (n && n.high !== null) {
-      out += '<span class="tm">завтра ' + n.high + '°'
+      out += '<div class="tm">' + iconHtml(n.icon, false) + '<span>завтра ' + n.high + '°'
         + (n.low !== null ? ' / ' + n.low + '°' : '')
-        + (n.text ? ', ' + esc(n.text) : '') + '</span>';
+        + (n.text ? ', ' + esc(n.text) : '') + '</span></div>';
     }
 
     el.innerHTML = out;

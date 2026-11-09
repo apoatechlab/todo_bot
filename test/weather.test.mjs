@@ -36,12 +36,50 @@ calls = []; reply = 'ok';
   eq("and today's word too", w.today.text, 'дождь');
   eq('tomorrow is carried as well', [w.tomorrow.high, w.tomorrow.low, w.tomorrow.text], [23, 17, 'ясно']);
   eq('the place is a label', w.place, 'Барселона');
+  eq('a shape is chosen for the sky', w.icon, 'cloud');
+  eq('and one for each forecast day', [w.today.icon, w.tomorrow.icon], ['rain', 'clear']);
 
   const url = new URL(calls[0]);
   eq('asked Open-Meteo for Barcelona', url.searchParams.get('latitude'), '41.3874');
   eq('with the family timezone', url.searchParams.get('timezone'), 'Europe/Madrid');
+  ok('and asks whether it is daylight', url.searchParams.get('current').includes('is_day'));
   eq('and two days', url.searchParams.get('forecast_days'), '2');
   ok('no API key is involved', !/key|token|appid/i.test(calls[0]), calls[0]);
+}
+
+// --------------------------------------------------------- the icon table ---
+{
+  // Every WMO code the text table names must also have a shape, or the wall
+  // shows a word with a blank where the picture goes.
+  const missing = Object.keys(W.WMO).filter(c => !W.WMO_ICON[c]);
+  eq('every described code has a drawing', missing, []);
+  const shapes = new Set(Object.values(W.WMO_ICON));
+  eq('and they resolve to the seven shapes the page knows',
+     [...shapes].sort(), ['clear', 'cloud', 'fog', 'partly', 'rain', 'snow', 'storm']);
+
+  // The page's own table, read from the file, must cover each of them plus the
+  // two after-dark variants.
+  const page = await (await import('node:fs/promises'))
+    .readFile(new URL('../src/wall.html', import.meta.url), 'utf8');
+  const drawn = [...page.matchAll(/^    ([a-zA-Z]+):$|^    ([a-zA-Z]+):\n/gm)]
+    .map(m => m[1] || m[2]);
+  const inPage = new Set([...page.matchAll(/\n    ([a-zA-Z]+):\s*\n?\s*'/g)].map(m => m[1]));
+  for (const shape of shapes) ok(`the page draws «${shape}»`, inPage.has(shape), [...inPage].join(','));
+  ok('and has a moon for a clear night', inPage.has('moon'));
+  ok('and a clouded moon', inPage.has('partlyNight'));
+}
+
+// --- day and night ----------------------------------------------------------
+{
+  const e = env();
+  reply = 'ok'; calls = [];
+  body.current.is_day = 1;
+  eq('daylight is reported as such', (await W.weather(e)).day, true);
+
+  const e2 = env();
+  body.current.is_day = 0;
+  eq('and night too', (await W.weather(e2)).day, false);
+  body.current.is_day = 1;
 }
 
 // ------------------------------------------------------------------ caching --

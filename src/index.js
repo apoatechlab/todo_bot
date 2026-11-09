@@ -13,7 +13,7 @@
  *            ALERT_LEAD_MIN, ALERT_MIN_PRIORITY, ALERT_CHAT_ID,
  *            BOT_USERNAME, MINIAPP_SHORT_NAME, DRIVE_ROOT_NAME, DRIVE_ROOT_ID,
  *            DELETE_REQUESTS, WEEKEND_LABEL, WEEKEND_AT, WEEKEND_COUNT,
- *            WEEKEND_CHAT_ID
+ *            WEEKEND_CHAT_ID, WEATHER_LAT, WEATHER_LON, WEATHER_PLACE
  */
 
 import APP_HTML from './app.html';
@@ -2287,6 +2287,84 @@ const WALL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
  * its link instead — the same family-only data the Mini App shows, behind a
  * secret the family keeps in a bookmark. Without the secret set, it is off.
  */
+// ================================================================ weather ===
+/**
+ * Open-Meteo: no key, no account, and generous enough for a household.
+ *
+ * Fetched here rather than from the wall page so one cached call serves every
+ * screen, and so the tablet in the hallway needs to reach nothing but this
+ * Worker — which is also what keeps it working behind a restrictive network.
+ */
+const WEATHER_API = 'https://api.open-meteo.com/v1/forecast';
+const WEATHER_TTL = 900;            // Open-Meteo refreshes about every 15 minutes
+
+/** WMO code -> what to call it on a wall. Short: it is read from a doorway. */
+const WMO = {
+  0: 'ясно', 1: 'почти ясно', 2: 'облачно', 3: 'пасмурно',
+  45: 'туман', 48: 'изморозь',
+  51: 'морось', 53: 'морось', 55: 'морось',
+  56: 'ледяная морось', 57: 'ледяная морось',
+  61: 'дождь', 63: 'дождь', 65: 'сильный дождь',
+  66: 'ледяной дождь', 67: 'ледяной дождь',
+  71: 'снег', 73: 'снег', 75: 'сильный снег', 77: 'снежная крупа',
+  80: 'ливень', 81: 'ливень', 82: 'сильный ливень',
+  85: 'снегопад', 86: 'снегопад',
+  95: 'гроза', 96: 'гроза с градом', 99: 'гроза с градом',
+};
+
+async function fetchWeather(env) {
+  const lat = (env.WEATHER_LAT || '41.3874').trim();      // Barcelona
+  const lon = (env.WEATHER_LON || '2.1686').trim();
+
+  const q = new URLSearchParams({
+    latitude: lat,
+    longitude: lon,
+    current: 'temperature_2m,weather_code',
+    daily: 'temperature_2m_max,temperature_2m_min,weather_code',
+    timezone: env.TZ_NAME || 'Europe/Madrid',
+    forecast_days: '2',
+  });
+  const r = await fetch(`${WEATHER_API}?${q}`);
+  if (!r.ok) throw new Error(`Open-Meteo ${r.status}`);
+  const d = await r.json();
+
+  const round = v => (typeof v === 'number' ? Math.round(v) : null);
+  const day = i => ({
+    high: round(d.daily?.temperature_2m_max?.[i]),
+    low: round(d.daily?.temperature_2m_min?.[i]),
+    text: WMO[d.daily?.weather_code?.[i]] ?? null,
+  });
+
+  return {
+    place: env.WEATHER_PLACE || 'Барселона',
+    now: round(d.current?.temperature_2m),
+    text: WMO[d.current?.weather_code] ?? null,
+    today: day(0),
+    tomorrow: day(1),
+  };
+}
+
+/**
+ * Never throws and never blanks the wall: a fresh reading if there is one, the
+ * last good one if the service is down, and null only if we have never had one.
+ * Yesterday's forecast on the wall beats a hole where the weather was.
+ */
+async function weather(env) {
+  const key = (env.WEATHER_LAT || '41.3874').trim() + ',' + (env.WEATHER_LON || '2.1686').trim();
+  const fresh = await env.CHATS.get(`weather:${key}`, 'json');
+  if (fresh) return fresh;
+
+  try {
+    const w = await fetchWeather(env);
+    await env.CHATS.put(`weather:${key}`, JSON.stringify(w), { expirationTtl: WEATHER_TTL });
+    await env.CHATS.put(`weather:${key}:last`, JSON.stringify(w));
+    return w;
+  } catch (e) {
+    console.warn('weather:', e.message);
+    return env.CHATS.get(`weather:${key}:last`, 'json');
+  }
+}
+
 async function apiWall(request, env) {
   const key = new URL(request.url).searchParams.get('k') || '';
   if (!env.WALL_KEY) return json({ error: 'WALL_KEY не задан — экран выключен.' }, 503);
@@ -2297,7 +2375,9 @@ async function apiWall(request, env) {
   const tomorrow = shiftDate(today, 1);
   const dow = new Date(`${today}T12:00:00Z`).getUTCDay();   // 0 = Sunday
   const monday = shiftDate(today, -((dow + 6) % 7));
-  const [all, people, marks] = await Promise.all([listTasks(env), roster(env), getMarks(env)]);
+  const [all, people, marks, wx] = await Promise.all([
+    listTasks(env), roster(env), getMarks(env), weather(env),
+  ]);
   const nameOf = Object.fromEntries(people.map(p => [p.id, p.name.split(' ')[0]]));
 
   const day = t => t.due?.date?.slice(0, 10) ?? null;
@@ -2320,6 +2400,7 @@ async function apiWall(request, env) {
   return json({
     tz,
     today,
+    weather: wx,
     mark: label(markOn(today)),
     tomorrowMark: label(markOn(tomorrow)),
     overdue: all.filter(t => day(t) && day(t) < today).map(item)

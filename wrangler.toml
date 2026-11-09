@@ -46,6 +46,12 @@ WEEKEND_AT         = "18:00"               # local time in TZ_NAME, Thursdays
 WEEKEND_COUNT      = "6"                   # how many undated ideas to offer
 # WEEKEND_CHAT_ID  = ""                    # defaults to DIGEST_CHAT_ID
 
+# Weather on the wall display. Open-Meteo — no key, no account. Defaults are
+# Barcelona; WEATHER_PLACE is only a label.
+WEATHER_LAT        = "41.3874"
+WEATHER_LON        = "2.1686"
+WEATHER_PLACE      = "Барселона"
+
 # Due-soon alerts (every 5 min).
 ALERT_LEAD_MIN     = "5"                   # warn this many minutes ahead
 ALERT_MIN_PRIORITY = "2"                   # API scale: 1=default, so 2 = above default

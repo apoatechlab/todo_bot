@@ -653,6 +653,25 @@ than fits, the passed ones leave first and the rest is counted as «и ещё N�
 https://<worker-host>/wall?k=<WALL_KEY>
 ```
 
+**Weather, under the clock.** Temperature now, a word for the sky, today's
+high/low, then tomorrow on a second line — the same glance that asks what time
+it is asks whether anyone needs a coat. Muted, so it never competes with the
+hour.
+
+It comes from [Open-Meteo](https://open-meteo.com) — no key, no account —
+fetched **by the Worker** rather than by the page: one cached call serves every
+screen, and the tablet in the hallway needs to reach nothing but this Worker,
+which is also what keeps it working on a locked-down network. Cached 15 minutes,
+about how often the forecast moves.
+
+A good reading is also kept without expiry. If Open-Meteo is down, the wall
+shows the last one rather than a hole where the weather was, and `weather` is
+`null` only if we have never had one — the page simply omits the line. It can
+never take the screen down: nothing in that path throws.
+
+Coordinates are `WEATHER_LAT` / `WEATHER_LON`, defaulting to Barcelona;
+`WEATHER_PLACE` is only a label.
+
 **The rest of the week.** Every 20 seconds the task side crossfades to «Ещё на
 этой неделе» — the days after today up to Sunday, grouped by day, empty days
 skipped — for 9 seconds, then back. Each turn is a slow fade out, a short

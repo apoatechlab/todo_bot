@@ -64,11 +64,24 @@
     font-size: 3vmin; padding: 1vmin 2.2vmin; border-radius: 999px;
     color: var(--mc, var(--accent)); border: .25vmin solid currentColor;
   }
+  /* Weather sits under the clock: the same glance that asks "what time is it"
+     asks "do I need a coat". Muted, so it never competes with the hour. */
+  .wx { margin-top: 3vmin; font-size: 3vmin; color: var(--muted); line-height: 1.45; }
+  .wx .t {
+    color: var(--text); font-size: 4.6vmin; font-weight: 300;
+    font-variant-numeric: tabular-nums;
+  }
+  .wx .sep { color: var(--faint); margin: 0 1.2vmin; }
+  .wx .tm { display: block; font-size: 2.6vmin; margin-top: .6vmin; }
+
   @media (orientation: portrait) {
     .clock { display: grid; grid-template-columns: auto 1fr; align-items: end; gap: 3vmin 4vmin; }
     .time { font-size: 22vmin; }
     .date { margin-top: 0; text-align: right; }
     .mark { margin-top: 0; justify-self: start; }
+    /* The clock becomes a two-column grid here; weather spans it rather than
+       being dealt into whichever cell happens to be free. */
+    .wx { grid-column: 1 / -1; margin-top: 1vmin; }
   }
 
   /* --- tasks side --- */
@@ -202,6 +215,7 @@
     <div class="time" id="time">--:--</div>
     <div class="date" id="date"></div>
     <div class="mark" id="mark" hidden></div>
+    <div class="wx" id="wx" hidden></div>
   </section>
   <section class="tasks" id="tasks"></section>
 </main>
@@ -339,6 +353,31 @@
       .format(new Date(iso + 'T12:00:00Z')).replace(/^\d+\s*/, '');
   }
 
+  /** Temperature now, the day's range, and a word about tomorrow. */
+  function renderWeather(w) {
+    var el = $('wx');
+    if (!w || w.now === null || w.now === undefined) { el.hidden = true; return; }
+
+    var out = '<span class="t">' + w.now + '°</span>';
+    if (w.text) out += '<span class="sep">·</span>' + esc(w.text);
+
+    var t = w.today;
+    // The range is only worth the width once the day has somewhere left to go.
+    if (t && t.high !== null && t.low !== null) {
+      out += '<span class="sep">·</span>' + t.high + '° / ' + t.low + '°';
+    }
+
+    var n = w.tomorrow;
+    if (n && n.high !== null) {
+      out += '<span class="tm">завтра ' + n.high + '°'
+        + (n.low !== null ? ' / ' + n.low + '°' : '')
+        + (n.text ? ', ' + esc(n.text) : '') + '</span>';
+    }
+
+    el.innerHTML = out;
+    el.hidden = false;
+  }
+
   function render() {
     var d = state.data;
 
@@ -348,6 +387,8 @@
       $('mark').textContent = m.label + (m.note ? ' · ' + m.note : '');
       $('mark').style.setProperty('--mc', m.color || '');
     }
+
+    renderWeather(d.weather);
 
     var next = nextHtml();
     state.hasNext = !!next;

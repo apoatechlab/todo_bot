@@ -699,7 +699,7 @@ back; untouched for 30 seconds, it goes back by itself. `/api/wall` carries
 their next date only, since that is all Todoist returns.
 
 **Timer.** A quiet «Таймер» button sits in a corner: bottom left in landscape,
-top right in portrait. It opens presets from 1 minute to an hour, plus a −/+
+top right in portrait. It opens presets from 1 minute to an hour (7 and 8 included), plus a −/+
 stepper. While a timer runs, the button shows the countdown; tapping it offers
 +1 min or cancel. When time is up, the whole screen says «Время вышло» and a
 bell rings until a tap, for at most two minutes. The bell is synthesised in Web

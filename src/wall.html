@@ -242,7 +242,8 @@
   .tpanel { width: min(92vw, 110vmin); text-align: center; }
   .tpanel h2 { margin: 0 0 4vmin; font-size: 3vmin; font-weight: 500; letter-spacing: .16em;
     text-transform: uppercase; color: var(--muted); }
-  .tgrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2.4vmin; }
+  .tgrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2.4vmin; }
+  @media (orientation: portrait) { .tgrid { grid-template-columns: repeat(4, 1fr); } }
   .tgrid button, .tstep button, .tact button {
     font: inherit; color: var(--text); background: rgba(255, 255, 255, .04);
     border: .2vmin solid var(--faint); border-radius: 2.4vmin; cursor: pointer;
@@ -741,7 +742,7 @@
   // A kitchen timer: pick minutes, and when they are up the whole screen says
   // so and a bell rings until someone taps. The end time is kept, so a reload
   // or a dropped connection does not lose a running timer.
-  var T_PRESETS = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60];
+  var T_PRESETS = [1, 2, 3, 5, 7, 8, 10, 15, 20, 30, 45, 60];
   var T_RING_MAX = 2 * 60 * 1000;               // nobody home: stop after two minutes
   var ICON_TIMER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" '
     + 'stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="7.5"/>'

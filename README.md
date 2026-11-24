@@ -331,6 +331,12 @@ will share the same rule list.
 `delete_task`, `search_tasks`, `add_house_rule`, `remove_house_rule`.
 Agent loop caps at 5 hops.
 
+A new task with no date lands on today, because an undated task never shows on
+the wall or in the digest. The code sets this (`addDue`), so it does not rely on
+the model remembering. Two cases stay undated: the person says so («без
+срока», «когда-нибудь» → `due_string: "no date"`), or the task is a weekend
+idea, which waits for a free Saturday instead of going overdue tonight.
+
 ---
 
 ## 6. Anthropic API — what changed from the handoff draft

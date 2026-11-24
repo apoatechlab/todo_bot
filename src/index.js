@@ -436,7 +436,7 @@ const tools = [
       type: 'object',
       properties: {
         content: { type: 'string', description: "Task title, in the user's language." },
-        due_string: { type: 'string', description: 'Due date in the user\'s own words, e.g. "завтра в 18:00", "cada lunes". Omit if none was mentioned.' },
+        due_string: { type: 'string', description: 'Due date in the user\'s own words, e.g. "завтра в 18:00", "cada lunes". Omit if none was mentioned — the task then lands on today. Pass "no date" only if the person explicitly wants it undated («без срока», «когда-нибудь», «не горит»).' },
         description: { type: 'string' },
         priority: { type: 'integer', description: '1 = normal … 4 = urgent' },
         labels: { type: 'array', items: { type: 'string' } },
@@ -604,17 +604,32 @@ const tools = [
   },
 ];
 
+/**
+ * The date a new task gets. No date mentioned means today: a task with no date
+ * never shows on the wall or in the digest, and gets forgotten. Two exceptions
+ * stay undated: an explicit «без срока» ("no date"), and weekend ideas, which
+ * wait for a free Saturday rather than going overdue tonight.
+ */
+function addDue(args, env = {}) {
+  const said = args.due_string?.trim();
+  if (said && /^(no date|no due date|без срока|без даты)$/i.test(said)) return null;
+  if (said) return { string: said, lang: env.TODOIST_DUE_LANG || 'ru' };
+  if (args.weekend) return null;
+  return { string: 'today', lang: 'en' };
+}
+
 async function runTool(env, name, args) {
   switch (name) {
     case 'add_task': {
+      const due = addDue(args, env);
       const t = await todoist(env, '/tasks', {
         method: 'POST',
         body: {
           project_id: env.TODOIST_PROJECT_ID,
           content: args.content,
           description: args.description,
-          due_string: args.due_string,
-          due_lang: args.due_string ? (env.TODOIST_DUE_LANG || 'ru') : undefined,
+          due_string: due?.string,
+          due_lang: due?.lang,
           priority: args.priority,
           labels: args.weekend
             ? [...new Set([...(args.labels || []), weekendLabel(env)])]
@@ -1728,6 +1743,7 @@ How you work (fixed):
 - Turn what the person says into tool calls. Don't ask permission for ordinary adds, postpones or completions — just do them.
 - One message may hold several instructions; handle all of them.
 - Pass dates through verbatim in due_string, in the person's own words. Todoist parses natural language itself — never compute a date yourself.
+- A new task with no date mentioned goes on today: leave due_string out and the code sets it. Only if the person says it has no date («без срока», «когда-нибудь», «не горит») pass due_string "no date". Weekend ideas stay undated on their own.
 - "done / сделал / listo" → complete_task. "delete / удали / borra" → delete_task.
 - Messages in a group are prefixed with [Name]. Use that to resolve "мне", "я сделал", and to pick an assignee.
 - If a task isn't in the list below, call search_tasks before saying it doesn't exist.

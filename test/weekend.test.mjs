@@ -172,6 +172,19 @@ for (const at of ['00:00', '12:00']) {
   eq('and is not duplicated', createdBody.labels, ['выходные']);
 }
 
+// ------------------------------------------------------ default due ---------
+{
+  const e = env();
+  const due = async args => { createdBody = null; await W.runTool(e, 'add_task', { content: 'x', ...args });
+    return [createdBody.due_string ?? null, createdBody.due_lang ?? null]; };
+  eq('no date said → today', await due({}), ['today', 'en']);
+  eq('a said date passes through', await due({ due_string: 'завтра в 18:00' }), ['завтра в 18:00', 'ru']);
+  eq('«без срока» stays undated', await due({ due_string: 'без срока' }), [null, null]);
+  eq('"no date" stays undated', await due({ due_string: 'no date' }), [null, null]);
+  eq('weekend idea with no date stays undated', await due({ weekend: true }), [null, null]);
+  eq('weekend idea with a date keeps it', await due({ weekend: true, due_string: 'в субботу' }), ['в субботу', 'ru']);
+}
+
 // Updating must not wipe the other labels — Todoist replaces the whole array.
 {
   const e = env();

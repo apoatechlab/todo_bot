@@ -234,7 +234,9 @@
   .tbar .tchip svg { width: 4.4vmin; height: 4.4vmin; }
   .tbar.many .tchip { font-size: 3.4vmin; padding: 1.2vmin 2.4vmin; }
   .tbar.many .tchip svg { width: 3.4vmin; height: 3.4vmin; }
-  .tbar .plus { width: 6.6vmin; height: 6.6vmin; padding: 0; justify-content: center; font-size: 4vmin; font-weight: 300; }
+  /* As tall as the countdowns beside it, and round. */
+  .tbar .plus { align-self: stretch; aspect-ratio: 1; min-height: 6.6vmin; padding: 0; justify-content: center; }
+  .tbar .plus svg { width: 3.2vmin; height: 3.2vmin; }
   .tchip .tcount { display: none; color: var(--muted); font-size: .72em; }
   @media (orientation: portrait) {
     /* Above the date there is room for one chip, not a row: the soonest timer
@@ -265,7 +267,8 @@
   .tgrid button small { display: block; font-size: 2.2vmin; color: var(--muted); margin-top: .6vmin; }
   .tgrid button:active, .tstep button:active, .tact button:active { background: rgba(233, 184, 114, .16); }
   .tstep { display: flex; align-items: center; justify-content: center; gap: 3vmin; margin-top: 4vmin; }
-  .tstep button { width: 10vmin; height: 10vmin; font-size: 5vmin; }
+  .tstep button { width: 10vmin; height: 10vmin; display: grid; place-items: center; padding: 0; }
+  .tstep button svg { width: 4.4vmin; height: 4.4vmin; }
   .tstep .n { min-width: 22vmin; font-size: 7vmin; font-weight: 200; font-variant-numeric: tabular-nums; }
   .tstep .n small { font-size: 2.6vmin; color: var(--muted); margin-left: 1vmin; }
   .tact { display: flex; justify-content: center; gap: 3vmin; margin-top: 4vmin; }
@@ -769,6 +772,12 @@
   var ICON_TIMER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" '
     + 'stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="7.5"/>'
     + '<path d="M12 13.5V9.5M9.5 2.5h5M12 2.5v3.5M18.6 6.4l1.4-1.4"/></svg>';
+  // Drawn, not typed: a "+" glyph sits on the font's baseline, a little off
+  // the middle of a round button.
+  var ICON_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" '
+    + 'stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+  var ICON_MINUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" '
+    + 'stroke-linecap="round"><path d="M5 12h14"/></svg>';
   var timers = [];                              // { id, end, mins }, soonest first
   var ringing = [];                             // minutes of the ones that ran out, until a tap
   var tm = { tick: null, ringStop: null, step: 5, sheetIdle: null, view: null };
@@ -841,7 +850,7 @@
         + '</button>';
     }).join('')
       + (timers.length >= T_MAX ? ''
-        : timers.length ? '<button class="tadd plus" aria-label="Ещё таймер">+</button>'
+        : timers.length ? '<button class="tadd plus" aria-label="Ещё таймер">' + ICON_PLUS + '</button>'
         : '<button class="tadd">' + ICON_TIMER + '<span>Таймер</span></button>');
     bar.classList.toggle('run', timers.length > 0);
     bar.classList.toggle('many', timers.length > 1);
@@ -930,9 +939,9 @@
       + T_PRESETS.map(function (m) {
         return '<button data-m="' + m + '">' + (m === 60 ? '1<small>час</small>' : m + '<small>мин</small>') + '</button>';
       }).join('')
-      + '</div><div class="tstep"><button data-t="minus" aria-label="меньше">−</button>'
+      + '</div><div class="tstep"><button data-t="minus" aria-label="меньше">' + ICON_MINUS + '</button>'
       + '<div class="n"><span id="tsN">' + tm.step + '</span><small>мин</small></div>'
-      + '<button data-t="plus" aria-label="больше">+</button></div>'
+      + '<button data-t="plus" aria-label="больше">' + ICON_PLUS + '</button></div>'
       + '<div class="tact"><button class="go" data-t="go">Старт</button><button data-t="close">Закрыть</button></div></div>');
   }
   function tList() {

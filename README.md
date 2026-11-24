@@ -698,15 +698,18 @@ back; untouched for 30 seconds, it goes back by itself. `/api/wall` carries
 `days` — this week and next, Monday first — for both. Recurring tasks appear on
 their next date only, since that is all Todoist returns.
 
-**Timer.** A quiet «Таймер» button sits in a corner: bottom left in landscape,
-top right in portrait. It opens presets from 1 minute to an hour (7 and 8 included), plus a −/+
-stepper. While a timer runs, the button shows the countdown; tapping it offers
-+1 min or cancel. When time is up, the whole screen says «Время вышло» and a
-bell rings until a tap, for at most two minutes. The bell is synthesised in Web
-Audio — quick high pairs that grow louder, in the spirit of the classic phone
-timer rather than a copy of Apple's sound. Browsers only allow sound after a
-touch, and setting the timer is that touch. The end time is kept in
-localStorage, so a reload does not lose a running timer.
+**Timers.** Up to six kitchen timers can run at once. A quiet «Таймер» button
+sits in a corner: bottom left in landscape, top right in portrait. It opens
+presets from 1 minute to an hour (7 and 8 included), plus a −/+ stepper.
+Running timers sit in that corner as countdowns, soonest first, with a «+» for
+one more. Landscape shows them all; portrait shows the soonest one with «+N».
+Tapping a countdown lists every timer, each with +1 min and cancel. When one
+runs out, the whole screen says «Время вышло» and names the timers that
+finished. A bell rings until a tap, for at most two minutes, and the other
+timers keep going. The bell is synthesised in Web Audio — quick high pairs that
+grow louder, in the spirit of the classic phone timer rather than a copy of
+Apple's sound. Browsers only allow sound after a touch, and setting a timer is
+that touch. End times are kept in localStorage, so a reload does not lose them.
 
 **Authorisation.** The Mini App can ask Telegram who is looking; a wall tablet
 has no Telegram. So the link carries a secret, `WALL_KEY`, compared in constant

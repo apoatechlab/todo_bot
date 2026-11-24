@@ -212,6 +212,65 @@
     background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 2.6vmin; cursor: pointer;
   }
 
+  /* --- kitchen timer --- */
+  /* A quiet corner button: the hours it is not needed it should not be seen
+     from the hallway. Running, it becomes the countdown itself. */
+  .tbtn {
+    position: fixed; z-index: 5;
+    left: calc(4vmin + env(safe-area-inset-left, 0px)); bottom: calc(3.4vmin + env(safe-area-inset-bottom, 0px));
+    display: flex; align-items: center; gap: 1.4vmin;
+    padding: 1.6vmin 2.4vmin; border-radius: 999px; border: .2vmin solid var(--faint);
+    background: transparent; color: var(--muted); font: inherit; font-size: 2.6vmin; cursor: pointer;
+    transition: color .4s ease, border-color .4s ease, opacity 2.5s ease;
+  }
+  .tbtn svg { width: 3.4vmin; height: 3.4vmin; }
+  .tbtn.run { color: var(--accent); border-color: rgba(233, 184, 114, .45); font-size: 4.4vmin;
+    font-variant-numeric: tabular-nums; padding: 1.4vmin 3vmin; }
+  .tbtn.run svg { width: 4.4vmin; height: 4.4vmin; }
+  @media (orientation: portrait) {
+    .tbtn { bottom: auto; left: auto;
+      top: calc(4vmin + env(safe-area-inset-top, 0px)); right: calc(4vmin + env(safe-area-inset-right, 0px)); }
+  }
+  body.night:not(.awake) .tbtn:not(.run) { opacity: 0; pointer-events: none; }
+
+  .tsheet {
+    position: fixed; inset: 0; z-index: 10; display: grid; place-items: center;
+    background: rgba(11, 12, 14, .86); -webkit-backdrop-filter: blur(1.2vmin); backdrop-filter: blur(1.2vmin);
+    opacity: 0; pointer-events: none; transition: opacity .5s ease;
+  }
+  .tsheet.open { opacity: 1; pointer-events: auto; }
+  .tpanel { width: min(92vw, 110vmin); text-align: center; }
+  .tpanel h2 { margin: 0 0 4vmin; font-size: 3vmin; font-weight: 500; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--muted); }
+  .tgrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2.4vmin; }
+  .tgrid button, .tstep button, .tact button {
+    font: inherit; color: var(--text); background: rgba(255, 255, 255, .04);
+    border: .2vmin solid var(--faint); border-radius: 2.4vmin; cursor: pointer;
+  }
+  .tgrid button { padding: 3vmin 0; font-size: 5vmin; font-weight: 300; font-variant-numeric: tabular-nums; }
+  .tgrid button small { display: block; font-size: 2.2vmin; color: var(--muted); margin-top: .6vmin; }
+  .tgrid button:active, .tstep button:active, .tact button:active { background: rgba(233, 184, 114, .16); }
+  .tstep { display: flex; align-items: center; justify-content: center; gap: 3vmin; margin-top: 4vmin; }
+  .tstep button { width: 10vmin; height: 10vmin; font-size: 5vmin; }
+  .tstep .n { min-width: 22vmin; font-size: 7vmin; font-weight: 200; font-variant-numeric: tabular-nums; }
+  .tstep .n small { font-size: 2.6vmin; color: var(--muted); margin-left: 1vmin; }
+  .tact { display: flex; justify-content: center; gap: 3vmin; margin-top: 4vmin; }
+  .tact button { padding: 2.2vmin 5vmin; font-size: 3.2vmin; }
+  .tact .go { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+  .tact .no { color: var(--late); }
+  .tleft { font-size: 16vmin; font-weight: 200; color: var(--accent); font-variant-numeric: tabular-nums; line-height: 1; }
+
+  /* Time's up: the whole screen, so it is seen from the stove. */
+  .tring {
+    position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; align-content: center;
+    gap: 5vmin; background: var(--bg); text-align: center; cursor: pointer;
+  }
+  .tring .big { font-size: 13vmin; font-weight: 200; color: var(--accent); animation: tpulse 1.6s ease-in-out infinite; }
+  .tring .sub { font-size: 3.4vmin; color: var(--muted); }
+  .tring button { font: inherit; font-size: 4vmin; padding: 2.4vmin 9vmin; border-radius: 999px;
+    color: var(--bg); background: var(--accent); border: 0; cursor: pointer; }
+  @keyframes tpulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .55; transform: scale(.97); } }
+
   /* Night: plain black, so the hallway stays dark. A touch brings the page back
      for half a minute, so a dark screen never looks broken. */
   body.night:not(.awake) .wall, body.night:not(.awake) .week, body.night:not(.awake) .wake {
@@ -232,6 +291,9 @@
 <section class="week" id="week" aria-hidden="true"></section>
 <div class="status" id="status" hidden></div>
 <div class="gate" id="gate" hidden></div>
+<button class="tbtn timer-ui" id="tbtn" aria-label="Таймер"></button>
+<section class="tsheet timer-ui" id="tsheet" aria-hidden="true"></section>
+<section class="tring timer-ui" id="tring" hidden></section>
 <button class="wake" id="wake" hidden>Коснитесь, чтобы экран не гас</button>
 
 <script>
@@ -661,7 +723,9 @@
   document.addEventListener('pointerdown', function (e) {
     var b = document.body.classList;
     dark = b.contains('night') && !b.contains('awake');   // the first touch at night only wakes the page
-    sx = e.clientX; sy = e.clientY; poke();
+    poke();
+    if (e.target.closest && e.target.closest('.timer-ui')) { sx = null; return; }   // taps on the timer are not swipes
+    sx = e.clientX; sy = e.clientY;
   });
   document.addEventListener('pointerup', function (e) {
     if (sx === null || dark) { sx = null; return; }
@@ -672,6 +736,185 @@
     else openWeek(dx > 0);
   });
   document.addEventListener('pointercancel', function () { sx = null; });
+
+  /* ------------------------------------------------------------ timer --- */
+  // A kitchen timer: pick minutes, and when they are up the whole screen says
+  // so and a bell rings until someone taps. The end time is kept, so a reload
+  // or a dropped connection does not lose a running timer.
+  var T_PRESETS = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60];
+  var T_RING_MAX = 2 * 60 * 1000;               // nobody home: stop after two minutes
+  var ICON_TIMER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" '
+    + 'stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="7.5"/>'
+    + '<path d="M12 13.5V9.5M9.5 2.5h5M12 2.5v3.5M18.6 6.4l1.4-1.4"/></svg>';
+  var timer = { end: 0, mins: 0, tick: null, ringStop: null, step: 5, sheetIdle: null };
+
+  // Browsers only let a page make sound after a touch, so the audio context is
+  // made (or woken) on the touches that set a timer, and kept for the bell.
+  var audio = null, bell = null;
+  function ac() {
+    try {
+      if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === 'suspended') audio.resume();
+    } catch (e) { audio = null; }
+    return audio;
+  }
+  // One struck note: a bright sine with a quiet inharmonic overtone, a fast
+  // attack and a short ring, like a small metal bar.
+  function ping(t, f, g, out) {
+    [[f, 1, .34], [f * 2.76, .22, .12]].forEach(function (p) {
+      var o = audio.createOscillator(), v = audio.createGain();
+      o.type = 'sine';
+      o.frequency.value = p[0];
+      v.gain.setValueAtTime(0.0001, t);
+      v.gain.exponentialRampToValueAtTime(g * p[1], t + 0.006);
+      v.gain.exponentialRampToValueAtTime(0.0001, t + p[2]);
+      o.connect(v); v.connect(out);
+      o.start(t); o.stop(t + p[2] + 0.05);
+    });
+  }
+  // The bell: quick high pairs in a loop, getting louder over the first few
+  // bars — in the spirit of the classic phone timer, not a copy of it.
+  function bellStart() {
+    var a = ac();
+    if (!a || bell) return;
+    var out = a.createGain();
+    out.connect(a.destination);
+    var bar = 0;
+    function play() {
+      var t = a.currentTime + 0.05, g = Math.min(0.75, 0.25 + bar * 0.1);
+      [1760, 1318.5, 1760, 1318.5, 1760, 1318.5].forEach(function (f, i) { ping(t + i * 0.1, f, g, out); });
+      bar++;
+    }
+    play();
+    bell = { out: out, loop: setInterval(play, 1300) };
+  }
+  function bellStop() {
+    if (!bell) return;
+    clearInterval(bell.loop);
+    var out = bell.out;
+    bell = null;
+    try { out.gain.setTargetAtTime(0.0001, audio.currentTime, 0.03); } catch (e) {}
+    setTimeout(function () { try { out.disconnect(); } catch (e) {} }, 400);
+  }
+
+  function fmtLeft(ms) {
+    var s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+    var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+    return h ? h + ':' + p2(m) + ':' + p2(x) : m + ':' + p2(x);
+  }
+  function tSave() {
+    store.set('wall:timer', timer.end ? JSON.stringify({ end: timer.end, mins: timer.mins }) : '');
+  }
+  function tRender() {
+    var b = $('tbtn'), left = timer.end - Date.now(), run = timer.end && left > 0;
+    b.classList.toggle('run', !!run);
+    b.innerHTML = ICON_TIMER + '<span>' + (run ? fmtLeft(left) : 'Таймер') + '</span>';
+    var l = $('tsLeft');
+    if (l) l.textContent = fmtLeft(left);
+  }
+  function tTick() {
+    if (timer.end && Date.now() >= timer.end) tRing();
+    tRender();
+  }
+  function tRun() {
+    clearInterval(timer.tick);
+    timer.tick = setInterval(tTick, 250);
+    tTick();
+  }
+  function tStart(mins) {
+    timer.mins = mins;
+    timer.end = Date.now() + mins * 60 * 1000;
+    tSave();
+    tClose();
+    tRun();
+  }
+  function tCancel() {
+    timer.end = 0;
+    clearInterval(timer.tick);
+    tSave();
+    tRender();
+  }
+  function tRing() {
+    var mins = timer.mins;
+    tCancel();
+    var r = $('tring');
+    r.innerHTML = '<div class="big">Время вышло</div>'
+      + '<div class="sub">Таймер на ' + mins + ' мин</div><button>Стоп</button>';
+    r.hidden = false;
+    poke();                                     // at night, show the page behind it too
+    bellStart();
+    clearTimeout(timer.ringStop);
+    timer.ringStop = setTimeout(tSilence, T_RING_MAX);
+  }
+  function tSilence() {
+    $('tring').hidden = true;
+    clearTimeout(timer.ringStop);
+    bellStop();
+  }
+
+  function tOpen() {
+    var sh = $('tsheet');
+    if (timer.end > Date.now()) {
+      sh.innerHTML = '<div class="tpanel"><h2>Таймер на ' + timer.mins + ' мин</h2>'
+        + '<div class="tleft" id="tsLeft">' + fmtLeft(timer.end - Date.now()) + '</div>'
+        + '<div class="tact"><button data-t="add">+1 мин</button>'
+        + '<button class="no" data-t="cancel">Отменить</button><button data-t="close">Закрыть</button></div></div>';
+    } else {
+      sh.innerHTML = '<div class="tpanel"><h2>Таймер</h2><div class="tgrid">'
+        + T_PRESETS.map(function (m) {
+          return '<button data-m="' + m + '">' + (m === 60 ? '1<small>час</small>' : m + '<small>мин</small>') + '</button>';
+        }).join('')
+        + '</div><div class="tstep"><button data-t="minus" aria-label="меньше">−</button>'
+        + '<div class="n"><span id="tsN">' + timer.step + '</span><small>мин</small></div>'
+        + '<button data-t="plus" aria-label="больше">+</button></div>'
+        + '<div class="tact"><button class="go" data-t="go">Старт</button><button data-t="close">Закрыть</button></div></div>';
+    }
+    sh.classList.add('open');
+    sh.setAttribute('aria-hidden', 'false');
+    tIdle();
+  }
+  function tClose() {
+    var sh = $('tsheet');
+    sh.classList.remove('open');
+    sh.setAttribute('aria-hidden', 'true');
+    clearTimeout(timer.sheetIdle);
+    setTimeout(function () { if (!sh.classList.contains('open')) sh.innerHTML = ''; }, 600);
+  }
+  function tIdle() {                            // an untouched sheet goes away like the week does
+    clearTimeout(timer.sheetIdle);
+    timer.sheetIdle = setTimeout(tClose, WEEK_IDLE);
+  }
+
+  $('tbtn').addEventListener('click', function () { ac(); tOpen(); });
+  $('tring').addEventListener('click', tSilence);
+  $('tsheet').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    tIdle();
+    if (!b) { if (e.target === this) tClose(); return; }   // the dark around the panel
+    ac();
+    if (b.dataset.m) { tStart(+b.dataset.m); return; }
+    switch (b.dataset.t) {
+      case 'go': tStart(timer.step); break;
+      case 'minus': timer.step = Math.max(1, timer.step - (timer.step > 10 ? 5 : 1)); $('tsN').textContent = timer.step; break;
+      case 'plus': timer.step = Math.min(180, timer.step + (timer.step >= 10 ? 5 : 1)); $('tsN').textContent = timer.step; break;
+      case 'add': timer.end += 60 * 1000; timer.mins += 1; tSave(); tRender(); break;
+      case 'cancel': tCancel(); tClose(); break;
+      case 'close': tClose(); break;
+    }
+  });
+
+  (function restore() {
+    var saved = null;
+    try { saved = JSON.parse(store.get('wall:timer') || 'null'); } catch (e) {}
+    if (saved && saved.end) {
+      timer.end = saved.end;
+      timer.mins = saved.mins || 0;
+      if (Date.now() < timer.end) tRun();
+      else if (Date.now() - timer.end < T_RING_MAX) tRing();   // it ran out while the page was reloading
+      else tCancel();
+    }
+    tRender();
+  })();
 
   /* ------------------------------------------------------------- live --- */
   // The bot says "changed" down this socket the moment a task is added or done

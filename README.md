@@ -698,6 +698,16 @@ back; untouched for 30 seconds, it goes back by itself. `/api/wall` carries
 `days` — this week and next, Monday first — for both. Recurring tasks appear on
 their next date only, since that is all Todoist returns.
 
+**Timer.** A quiet «Таймер» button sits in a corner: bottom left in landscape,
+top right in portrait. It opens presets from 1 minute to an hour, plus a −/+
+stepper. While a timer runs, the button shows the countdown; tapping it offers
++1 min or cancel. When time is up, the whole screen says «Время вышло» and a
+bell rings until a tap, for at most two minutes. The bell is synthesised in Web
+Audio — quick high pairs that grow louder, in the spirit of the classic phone
+timer rather than a copy of Apple's sound. Browsers only allow sound after a
+touch, and setting the timer is that touch. The end time is kept in
+localStorage, so a reload does not lose a running timer.
+
 **Authorisation.** The Mini App can ask Telegram who is looking; a wall tablet
 has no Telegram. So the link carries a secret, `WALL_KEY`, compared in constant
 time. The page keeps the key in `localStorage`, so a home-screen icon saved
